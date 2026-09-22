@@ -547,5 +547,49 @@ check('the markup declares no other top-level band',
   (html.match(/^    <(header|section|div) class="(app-header|top-focus-bar|main-layout|day-view-section)"/gm) || []).length === 4,
   'an island is nested inside another section');
 
+console.log('\n[22] Hostile storage cannot kill the boot');
+// Each of these is a TypeError thrown while a module-level statement is still
+// evaluating, so it lands above every listener, above the render and above the
+// service worker wiring: a painted shell that responds to nothing, with the
+// user's real data sitting unreachable in storage behind it.
+storage.clear();
+storage.set('tm_tasks', '{}');
+const TMbadTasks = boot();
+check('a non-array tm_tasks boots instead of throwing', Array.isArray(TMbadTasks.tasks),
+  'loadJson(...).map threw at module level');
+check('and it comes up empty rather than inventing tasks', TMbadTasks.tasks.length === 0);
+
+storage.clear();
+storage.set('tm_tasks', JSON.stringify([{ id: '1', title: 'kept', group: 'Work' }]));
+storage.set('tm_groups', JSON.stringify([1, null, 'Home']));
+const TMbadGroups = boot();
+check('non-string group elements are dropped, not rendered',
+  TMbadGroups.groups.every(g => typeof g === 'string'), JSON.stringify(TMbadGroups.groups));
+check('a usable group survives the filter', TMbadGroups.groups.includes('Home'),
+  JSON.stringify(TMbadGroups.groups));
+check('an all-garbage group list falls back to the defaults',
+  (() => {
+    storage.set('tm_groups', JSON.stringify([1, null]));
+    return boot().groups.length > 0;
+  })(), 'groups ended up empty — renderGroups would emit nothing');
+
+console.log('\n[23] The TM.tasks seam sanitizes what sync will push through it');
+// Ids are interpolated into inline onclick attributes unescaped, so the
+// invariant "every id is UUID-shaped" is the only thing standing between a
+// server row and script execution. migrateLegacyIds establishes it for storage;
+// nothing established it for this setter.
+const TMseam = boot();
+TMseam.tasks = [{ id: "x');alert(1);//", title: 'hostile', group: 'Work', subtasks: [{ id: "s');alert(2);//", title: 'sub' }] }];
+check('a hostile task id is re-keyed on the way in', isUuid(TMseam.tasks[0].id), TMseam.tasks[0].id);
+check('a hostile subtask id is re-keyed too', isUuid(TMseam.tasks[0].subtasks[0].id),
+  TMseam.tasks[0].subtasks[0].id);
+TMseam.renderAll();
+check('no payload reaches the rendered markup',
+  !getEl('tasks-container').innerHTML.includes('alert('),
+  'the breakout survived into an onclick attribute');
+check('a non-array assignment does not break the bridge',
+  (() => { TMseam.tasks = {}; return Array.isArray(TMseam.tasks) && TMseam.tasks.length === 0; })(),
+  'TM.tasks = {} left the app holding a non-array');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

@@ -246,12 +246,37 @@ function loadJson(key, fallback) {
   }
 }
 
+// Scalars. loadJson covers the JSON keys; these three read raw strings, and
+// getItem itself throws where storage is unavailable (some private modes, a site
+// with storage blocked by policy). A throw here is at module level, above every
+// getElementById and every addEventListener, so the app would paint and then do
+// nothing at all — no handler wired, no error on screen.
+function readStored(key) {
+  try { return localStorage.getItem(key); } catch (err) { return null; }
+}
+
 // No seed data: with sync in place, a hard-coded fallback would re-upload these
 // tasks from any device holding empty storage, resurrecting ones you deleted.
 let groups = loadJson('tm_groups', DEFAULT_GROUPS);
-if (!Array.isArray(groups) || groups.length === 0) groups = [...DEFAULT_GROUPS];
+// The elements, not just the container. Group names are rendered through
+// .toLowerCase() in terminal mode — which is the default — so one non-string
+// element throws inside renderAll(): on boot, and again on every handler that
+// re-renders, leaving an app that paints once and then ignores every click.
+// There is no rename or delete-group UI yet, so a bad name is unrecoverable
+// from inside the app.
+if (!Array.isArray(groups)) groups = [...DEFAULT_GROUPS];
+groups = groups.filter(g => typeof g === 'string' && g !== '');
+if (groups.length === 0) groups = [...DEFAULT_GROUPS];
 
-let tasks = (loadJson('tm_tasks', [])).map(normalizeTask);
+// `tasks` gets the same container guard `groups` has. `.map` on a non-array is a
+// TypeError thrown while this module-level statement is still evaluating, so the
+// failure lands above the render, above every listener, and above the service
+// worker wiring — a painted shell that responds to nothing, with the user's data
+// still in storage and no way to reach it. `{}` is exactly what an empty or
+// errored sync response looks like, so this is the shape Phase 3 is most likely
+// to hand us.
+const storedTasks = loadJson('tm_tasks', []);
+let tasks = (Array.isArray(storedTasks) ? storedTasks : []).map(normalizeTask);
 
 // A reload or a cold start ends any focus session. The elapsed time already
 // folded into elapsedSeconds is kept; anything since the last checkpoint is not,
@@ -418,7 +443,7 @@ window.addEventListener('pageshow', (e) => {
 // workspace so the schedule has the page to itself. The choice sticks across
 // reloads. The focus queue stays visible either way — it is a persistent working
 // set rather than part of either view.
-let currentView = localStorage.getItem('tm_view') === 'day' ? 'day' : 'list';
+let currentView = readStored('tm_view') === 'day' ? 'day' : 'list';
 
 function applyView(view) {
   currentView = view === 'day' ? 'day' : 'list';
@@ -440,8 +465,8 @@ function applyView(view) {
 }
 
 // UI Mode & Theme Management
-let currentUIMode = localStorage.getItem('tm_ui_mode') || 'mode-terminal';
-let currentTheme = localStorage.getItem('tm_theme') || 'theme-dark';
+let currentUIMode = readStored('tm_ui_mode') || 'mode-terminal';
+let currentTheme = readStored('tm_theme') || 'theme-dark';
 
 function applyUIMode(mode) {
   currentUIMode = mode;
@@ -849,7 +874,12 @@ function renderDayView() {
   const dayTasks = tasks.filter(t => isTaskOnDate(t, currentViewDate) && !t.observing);
 
   if (dayTasks.length === 0) {
-    dayViewContainer.innerHTML = `<div class="empty-state">No active tasks scheduled for ${formatDateFriendly(currentViewDate)}.</div>`;
+    // Escaped even though currentViewDate is only ever a date input's value or
+    // today(): formatDateFriendly returns its argument verbatim when it is not
+    // three dash-separated parts, so anything that ever widens this source
+    // becomes markup. It is the one unescaped interpolation into innerHTML in
+    // the file that is not an id.
+    dayViewContainer.innerHTML = `<div class="empty-state">No active tasks scheduled for ${escapeHtml(formatDateFriendly(currentViewDate))}.</div>`;
     return;
   }
 
@@ -1465,9 +1495,26 @@ window.deleteSubtask = function(taskId, subtaskId) {
 // than forcing a rewrite of the app's all-globals + inline-onclick architecture.
 window.TM = {
   get tasks() { return tasks; },
-  set tasks(value) { tasks = value; },
+  // Every write through this seam is normalized and re-keyed, because it is the
+  // one entrance the boot migration does not cover. Task, subtask and note ids
+  // are interpolated into inline onclick attributes unescaped across the card
+  // renderer, which is only safe while every id matches UUID_SHAPE — an
+  // invariant migrateLegacyIds establishes for storage and that nothing
+  // established here. Without this, a sync layer writing a server row with an id
+  // like `x');alert(1);//` stores it verbatim and executes it on the next render,
+  // and subtask/note ids live in jsonb rather than uuid columns, so the database
+  // does not enforce their shape either.
+  set tasks(value) {
+    tasks = (Array.isArray(value) ? value : []).map(normalizeTask);
+    migrateLegacyIds();
+  },
   get groups() { return groups; },
-  set groups(value) { groups = value; },
+  set groups(value) {
+    groups = Array.isArray(value)
+      ? value.filter(g => typeof g === 'string' && g !== '')
+      : [...DEFAULT_GROUPS];
+    if (groups.length === 0) groups = [...DEFAULT_GROUPS];
+  },
   get selectedGroup() { return selectedGroup; },
   set selectedGroup(value) { selectedGroup = value; },
 
@@ -1501,17 +1548,14 @@ Object.defineProperty(window.TM, 'currentView', {
 });
 window.TM.applyView = applyView;
 
-// Initial Render
-renderAll();
-
 /* =========================================================
    SERVICE WORKER / UPDATE PROMPT
    ========================================================= */
 
-// Registration is skipped on file:// — `F:\TaskManagement\index.html` opened
-// directly must keep working exactly as before, and a worker cannot register
-// from a non-secure origin anyway. localStorage still backs everything, so the
-// app is fully functional with no worker at all.
+// Registration is skipped on file:// — index.html opened straight off disk must
+// keep working exactly as before, and a worker cannot register from a non-secure
+// origin anyway. localStorage still backs everything, so the app is fully
+// functional with no worker at all.
 function canRegisterServiceWorker() {
   return 'serviceWorker' in navigator &&
     (location.protocol === 'https:' ||
@@ -1579,3 +1623,10 @@ function wireServiceWorker() {
 }
 
 window.addEventListener('load', wireServiceWorker);
+
+// The initial render runs last, after the update prompt's listener is attached.
+// If it throws — a stored value the renderer chokes on, markup that outran it —
+// the app is broken either way, but at least the "new version is ready" bar can
+// still appear and be accepted. Rendering first would leave the user with a dead
+// page and no route back to a working build short of clearing site data.
+renderAll();

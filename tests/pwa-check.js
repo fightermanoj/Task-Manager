@@ -97,7 +97,23 @@ check('a missing optional asset cannot fail the install',
   /\.catch\(\(\) => \{\}\)/.test(sw),
   'one 404 in addAll aborts the whole install and leaves the app with no worker');
 check('a failed revalidation never overwrites a good cached copy',
-  /response\.ok\)\s*cache\.put/.test(sw));
+  /response\.ok[\s\S]{0,80}cache\.put/.test(sw));
+// A redirect stores its final body under the *original* URL, so a same-origin
+// 30x would land someone else's bytes on one of our keys.
+check('a redirected response is not cached under our own URL',
+  /response\.type === 'basic'/.test(sw));
+// Returning the cached copy settles respondWith at once; an untethered
+// revalidation can be killed with the worker before it lands, which is how a
+// new index.html ends up stored beside an old app.js.
+check('the revalidation is tied to the event lifetime',
+  /event\.waitUntil\(network\)/.test(sw));
+// Same-origin, but not per-user data. Without this the first API route or auth
+// callback becomes a cache that is never evicted and outlives a sign-out.
+check('the runtime cache only takes static assets',
+  /STATIC_EXTENSIONS/.test(sw) && /if \(STATIC_EXTENSIONS\.test\(url\.pathname\)\)/.test(sw));
+check('an unlisted URL passes through untouched',
+  !/respondWith\(staleWhileRevalidate\(event, request, RUNTIME_CACHE\)\);\s*\}\);\s*$/m.test(sw) ||
+  /if \(STATIC_EXTENSIONS\.test/.test(sw));
 
 console.log('\n[pwa-4] vercel.json');
 let vercel = null;
@@ -114,6 +130,12 @@ if (vercel) {
     'a cached worker can pin the phone to an old build indefinitely');
   check('index.html is revalidated too', noCache('/index.html'),
     'a cached shell is how the app gets permanently stale');
+  // The worker re-caches app.js from the network on every load, so those bytes
+  // have to be fresh: a long max-age on the CDN means it re-stores what it
+  // already had, and the app never updates with no way to recover client-side.
+  check('app.js and style.css are revalidated as well',
+    noCache('/app.js') && noCache('/style.css'),
+    'the worker would re-cache stale bytes on every launch');
   check('no legacy routes/rewrites block', !vercel.routes && !vercel.rewrites,
     'a static site needs none, and `version: 2` is from the retired builds pipeline');
 }

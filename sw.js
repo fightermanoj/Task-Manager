@@ -31,6 +31,11 @@ const CORE = [
   './manifest.json',
 ];
 
+// What the runtime cache is allowed to hold. Today this is the icons; the point
+// of the allowlist is that it stays that way once the origin serves something
+// per-user.
+const STATIC_EXTENSIONS = /\.(?:css|js|mjs|json|png|jpg|jpeg|gif|svg|webp|avif|ico|woff2?|ttf|otf|txt|webmanifest)$/i;
+
 // Best-effort: a missing icon must not fail the whole install and leave the app
 // with no worker at all.
 const OPTIONAL = [
@@ -67,19 +72,34 @@ self.addEventListener('message', event => {
   if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
-async function staleWhileRevalidate(request, cacheName) {
+// `event` is passed in so the revalidation can be handed to waitUntil. Returning
+// the cached copy settles respondWith immediately, and anything not tied to the
+// event's lifetime can be killed with the worker before it lands — which is how
+// the cache ends up holding a new index.html beside an old app.js. That pairing
+// crashes at boot (the renderer dereferences elements the old markup has not got
+// yet), and because a boot throw happens before the update prompt is wired, the
+// user has no way to accept the new version. The stores themselves are untouched.
+async function staleWhileRevalidate(event, request, cacheName) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
 
-  const network = fetch(request)
+  const network = fetch(request, { cache: 'no-cache' })
     .then(response => {
       // Opaque and error responses must not overwrite a good cached copy.
-      if (response && response.ok) cache.put(request, response.clone());
+      // `type === 'basic'` also excludes a redirected response, which would
+      // otherwise be stored under the app's own URL because cache.put keys on
+      // the request, not on where the redirect ended up.
+      if (response && response.ok && response.type === 'basic') {
+        return cache.put(request, response.clone()).then(() => response);
+      }
       return response;
     })
     .catch(() => null);
 
-  if (cached) return cached;
+  if (cached) {
+    event.waitUntil(network);
+    return cached;
+  }
 
   const response = await network;
   if (response) return response;
@@ -97,14 +117,23 @@ self.addEventListener('fetch', event => {
   // cold start from the home screen icon all work offline. Without this the
   // offline reload is a browser error page.
   if (request.mode === 'navigate') {
-    event.respondWith(staleWhileRevalidate(new Request(APP_SHELL), SHELL_CACHE));
+    // A fresh Request, not event.request: the real navigation URL never becomes
+    // a cache key, so a future auth callback carrying ?token= or #access_token
+    // can never be written into Cache Storage.
+    event.respondWith(staleWhileRevalidate(event, new Request(APP_SHELL), SHELL_CACHE));
     return;
   }
 
   if (CORE.some(path => url.pathname.endsWith(path.replace('./', '/')))) {
-    event.respondWith(staleWhileRevalidate(request, SHELL_CACHE));
+    event.respondWith(staleWhileRevalidate(event, request, SHELL_CACHE));
     return;
   }
 
-  event.respondWith(staleWhileRevalidate(request, RUNTIME_CACHE));
+  // Only static assets reach a cache. An unfiltered fallback is harmless while
+  // the origin serves nothing but this app, but the first same-origin API route
+  // or auth callback would make it a per-user data cache that is never evicted
+  // and can outlive a sign-out. Anything else passes through untouched.
+  if (STATIC_EXTENSIONS.test(url.pathname)) {
+    event.respondWith(staleWhileRevalidate(event, request, RUNTIME_CACHE));
+  }
 });
