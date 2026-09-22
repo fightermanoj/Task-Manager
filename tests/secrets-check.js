@@ -307,5 +307,83 @@ check('the app makes no cross-origin request at all',
   !/url\(\s*['"]?https?:/.test(css),
   'something in the markup or sheet is still fetched from another host');
 
+console.log('\n[sec-12] The content security policy says what it means to say');
+// vercel.json is strict JSON, so it cannot carry a comment explaining any of
+// this. The reasoning lives here instead, next to the assertions that would
+// break if someone loosened it without knowing why.
+//
+// Delivered as an HTTP header rather than a <meta> tag on purpose: a meta tag
+// silently ignores frame-ancestors, and — the reason that actually matters —
+// it would also apply when index.html is opened from file://, where 'self' does
+// not match an opaque file origin and every script would be refused. Running
+// the app straight off the disk is supported; a header leaves it untouched.
+const vercel = JSON.parse(contents.get('vercel.json') || '{}');
+const allRules = (vercel.headers || []).filter(h => h.source === '/(.*)');
+const cspHeader = allRules
+  .flatMap(r => r.headers || [])
+  .find(h => h.key === 'Content-Security-Policy');
+const csp = (cspHeader && cspHeader.value) || '';
+const directive = (name) => {
+  const m = csp.match(new RegExp(`(?:^|;\\s*)${name}\\s([^;]+)`));
+  return m ? m[1].trim() : null;
+};
+
+check('the policy is served as a header on every path',
+  !!cspHeader, 'no Content-Security-Policy on /(.*)');
+check('everything not named is denied', directive('default-src') === "'none'",
+  `got "${directive('default-src')}"`);
+
+// The two that keep the app's own architecture working. Both are inline and
+// both are deliberate: 19 generated onclick/onsubmit attributes, and 9 inline
+// style attributes in the card and analytics renderers. Neither was converted,
+// so dropping either token would break buttons or layout rather than tighten
+// anything.
+check('inline event handlers are still permitted',
+  /'unsafe-inline'/.test(directive('script-src') || ''));
+check('and so is the renderers\' inline style',
+  /'unsafe-inline'/.test(directive('style-src') || ''));
+check('but no script may come from another origin',
+  !/https?:|\*/.test(directive('script-src') || ''),
+  `got "${directive('script-src')}"`);
+check('and no stylesheet either',
+  !/https?:|\*/.test(directive('style-src') || ''),
+  `got "${directive('style-src')}"`);
+
+// These two are not optional. `default-src 'none'` is inherited by any fetch
+// directive that is not named, so without manifest-src the manifest is refused
+// and the app loses its icon, name and standalone display when installed — and
+// without worker-src the service worker never registers, taking offline support
+// and reminders with it.
+check('the manifest is explicitly allowed, or it would be blocked',
+  directive('manifest-src') === "'self'",
+  'default-src none would refuse the manifest and break installability');
+check('the service worker is explicitly allowed',
+  directive('worker-src') === "'self'",
+  'default-src none would refuse the worker, taking reminders with it');
+check('fonts come from this origin, which is why they were self-hosted',
+  directive('font-src') === "'self'", `got "${directive('font-src')}"`);
+
+// The one outbound connection the app is allowed. Derived from config.js so
+// that pointing the app at a different project fails here rather than silently
+// at runtime, where it would surface as "sign-in does nothing".
+const cfgUrl = ((contents.get('config.js') || '').match(/url:\s*'(https:\/\/[^']+)'/) || [])[1];
+check('config.js names a project', !!cfgUrl);
+check('the only permitted connection is that project',
+  directive('connect-src') === `'self' ${cfgUrl}`,
+  `connect-src is "${directive('connect-src')}" but config.js says ${cfgUrl}`);
+
+check('plugins and embedded content are refused',
+  directive('object-src') === "'none'");
+check('a <base> tag cannot retarget every relative URL',
+  directive('base-uri') === "'none'");
+check('the app cannot be framed', directive('frame-ancestors') === "'none'");
+check('a form cannot post anywhere', directive('form-action') === "'none'");
+check('no other host is named anywhere in the policy',
+  (csp.match(/https?:\/\/[^\s;]+/g) || []).every(h => h === cfgUrl),
+  'a second origin crept in');
+check('responses are not sniffed, and the URL is not leaked',
+  allRules.flatMap(r => r.headers || []).some(h => h.key === 'X-Content-Type-Options') &&
+  allRules.flatMap(r => r.headers || []).some(h => h.key === 'Referrer-Policy'));
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
