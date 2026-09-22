@@ -1,0 +1,1912 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* =========================================================
+   DESIGN TOKENS
+   Scales and semantics that do not vary between themes.
+   ========================================================= */
+:root {
+  /* Type scale. The old sheet used 11/11.5/12/12.5/13/13.5/14px more or less at
+     random; this collapses it to eight steps. Nothing below 12px carries body copy. */
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 20px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --space-7: 28px;
+
+  /* Radii */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 0.12s;
+  --dur: 0.18s;
+
+  /* Controls. --control-h is the desktop size; the coarse-pointer block at the
+     bottom of this file raises it to --control-h-touch (44px, the Apple/Google
+     minimum for a comfortable thumb target). */
+  --control-h: 28px;
+  --control-h-touch: 44px;
+  --focus-ring-w: 2px;
+  --focus-ring-offset: 2px;
+
+  /* ---------------------------------------------------------------------
+     Filled-surface tokens.
+
+     The old sheet used one variable for two different jobs: `--accent-blue`
+     was both "blue ink drawn on the page" and "blue paint behind white text".
+     Those need opposite values. In the dark theme the accent is deliberately
+     light (#58a6ff) so it reads on a dark page — but white text on it is
+     2.53:1, well under the 4.5:1 minimum.
+
+     So: `--accent-*` stays the ink colour, and `--fill-*` is the saturated
+     surface, always paired with `--on-fill`. Every `--fill-*` below clears
+     4.5:1 against white; each theme overrides only `--fill-blue`, whose
+     correct value genuinely differs between light and dark.
+     --------------------------------------------------------------------- */
+  --on-fill: #ffffff;
+  --fill-green: #1a7f37;   /* white text = 5.08:1 */
+  --fill-amber: #9a6700;   /* white text = 4.87:1 */
+  --fill-red: #cf222e;     /* white text = 5.36:1 */
+
+  /* Hover states darken rather than brighten. A `filter: brightness(1.12)` on
+     #1a7f37 lifts it to roughly 4.4:1 against white text — brightening a fill
+     while keeping white text on it breaks the contrast it was chosen for. */
+  --fill-green-hover: #176f30;  /* white text = 6.26:1 */
+  --fill-red-hover: #b81f2a;    /* white text = 6.43:1 */
+
+  /* Each theme overrides --fill-blue, so its hover has to be overridden
+     alongside it or a light-theme hover would be painted dark. The two dark
+     palettes share #1f6feb, hence the matching #1a5fd0. */
+  --fill-blue-hover: #0757ba;   /* white text = 6.82:1 */
+}
+
+/* =========================================================
+   THEME PALETTES
+   ========================================================= */
+
+/* Light Theme (GUI Mode) */
+body.theme-light {
+  color-scheme: light;
+
+  --bg-page: #f0f2f5;
+  --bg-window: #ffffff;
+  --bg-header: #24292f;
+  --header-text: #ffffff;
+  --bg-sidebar: #f6f8fa;
+  --bg-card: #ffffff;
+  --bg-subtle: #f6f8fa;
+  /* Surface for a top-level section band. --bg-subtle cannot do this job: it is
+     identical to --bg-window in three of the four palettes, which is why the
+     day schedule had no visible background at all outside terminal-light. */
+  --bg-section: #f6f8fa;
+  --text-main: #24292f;
+  --text-dim: #57606a;
+  --border-main: #d0d7de;
+  --border-subtle: #e1e4e8;
+  --accent-blue: #0969da;
+  /* Was #2da44e (GitHub green-500). --accent-green is *ink* — the focus-bar
+     heading, the live timer readout — and #2da44e is 3.22:1 on a white card
+     and 3.02:1 on the sidebar. Green-700 clears both. */
+  --accent-green: #1a7f37;
+  /* Darkened from #bf8700: at 11px this sat at 2.92:1 against --accent-amber-bg. */
+  --accent-amber: #9a6700;
+  --accent-amber-bg: #fff8c5;
+  --accent-red: #cf222e;
+  --fill-blue: #0969da;                 /* white text = 5.19:1 */
+  --fill-blue-hover: #0757ba;           /* white text = 6.82:1 */
+  /* Tinted chip/button backgrounds. Kept faint deliberately: at 0.10 the green
+     tint lifts a white card enough to drop green ink to 4.43:1. */
+  --green-tint: rgba(26, 127, 55, 0.08);
+  --blue-tint: rgba(9, 105, 218, 0.08);
+  --red-tint: rgba(207, 34, 46, 0.10);
+  --input-bg: #ffffff;
+  --input-border: #d0d7de;
+  --input-text: #24292f;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --focus-bar-bg: #f4fbf6;
+  --focus-bar-border: #1a7f37;
+  --focus-ring: #0969da;
+  --focus-ring-glow: rgba(9, 105, 218, 0.3);
+}
+
+/* Dark Theme (GUI Mode) */
+body.theme-dark {
+  color-scheme: dark;
+
+  --bg-page: #0d1117;
+  --bg-window: #161b22;
+  /* Was #0d1117 — the same colour as --bg-page, so the header island had no
+     surface of its own and only its border showed. The header is a raised band,
+     so it takes the first elevation step above the page. */
+  --bg-header: #161b22;
+  --header-text: #f0f6fc;
+  --bg-sidebar: #13171e;
+  --bg-card: #1f242c;
+  --bg-subtle: #161b22;
+  /* The schedule is an island on --bg-page, so it needs its own surface. At
+     #10161d it sat 4 steps off the page — a tint you could not see, leaving the
+     border to do all the work. */
+  --bg-section: #141b24;
+  --text-main: #c9d1d9;
+  --text-dim: #8b949e;
+  --border-main: #30363d;
+  --border-subtle: #21262d;
+  --accent-blue: #58a6ff;
+  /* Was #238636 (green-600). On a dark card that is 3.37:1; this token is ink,
+     not a fill, so it needs the lighter green-400. */
+  --accent-green: #3fb950;
+  --accent-amber: #d29922;
+  --accent-amber-bg: rgba(210, 153, 34, 0.15);
+  /* Red-400 rather than red-500 (#f85149). --accent-red is ink, and #f85149 is
+     only 4.65:1 on --bg-card — leaving no room at all for a red hover tint,
+     which lifts the background toward the text. */
+  --accent-red: #ff7b72;
+  --fill-blue: #1f6feb;                 /* white text = 4.63:1 */
+  --fill-blue-hover: #1a5fd0;           /* white text = 5.85:1 */
+  /* Dark tints can carry more alpha than the light ones — a dark surface has
+     far more headroom against a light ink. */
+  --green-tint: rgba(63, 185, 80, 0.14);
+  --blue-tint: rgba(88, 166, 255, 0.12);
+  --red-tint: rgba(255, 123, 114, 0.16);
+  --input-bg: #0d1117;
+  --input-border: #30363d;
+  --input-text: #c9d1d9;
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.4);
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --focus-bar-bg: #101c15;
+  --focus-bar-border: #3fb950;
+  --focus-ring: #58a6ff;
+  --focus-ring-glow: rgba(88, 166, 255, 0.35);
+}
+
+/* Terminal Mode Font & Overrides */
+body.mode-terminal {
+  --font-family: 'Fira Code', 'JetBrains Mono', Consolas, Monaco, monospace;
+}
+
+body.mode-terminal.theme-dark {
+  color-scheme: dark;
+
+  --bg-page: #06090f;
+  --bg-window: #0d1117;
+  --bg-header: #161b22;
+  --bg-sidebar: #090d13;
+  --bg-card: #121822;
+  --bg-subtle: #0d1117;
+  /* Was #080c11 — 2 steps off the page, all but invisible. */
+  --bg-section: #0e141c;
+  --border-main: #21262d;
+  --accent-green: #39d353;
+  --accent-blue: #58a6ff;
+  --accent-amber: #d29922;
+  --accent-amber-bg: rgba(210, 153, 34, 0.12);
+  --fill-blue: #1f6feb;                 /* white text = 4.63:1 */
+  --fill-blue-hover: #1a5fd0;           /* white text = 5.85:1 */
+  --green-tint: rgba(57, 211, 83, 0.16);
+  --blue-tint: rgba(88, 166, 255, 0.12);
+  --red-tint: rgba(255, 123, 114, 0.16);
+  --input-bg: #090d13;
+  --shadow-card: none;
+  --focus-bar-bg: #0b1510;
+  --focus-bar-border: #39d353;
+  --focus-ring: #39d353;
+  --focus-ring-glow: rgba(57, 211, 83, 0.3);
+}
+
+body.mode-terminal.theme-light {
+  color-scheme: light;
+
+  --bg-page: #f5f5f5;
+  --bg-window: #ffffff;
+  --bg-header: #e8eaed;
+  --header-text: #202124;
+  --bg-sidebar: #f8f9fa;
+  --bg-card: #ffffff;
+  /* Was #f1f3f4 — 4 steps off the page. The day view's group headers sit on
+     this at #f8f9fa, so it has to stay dark enough to keep them legible. */
+  --bg-section: #eaedef;
+  --border-main: #dadce0;
+  /* Was #188038 (Google green-700). The focus queue's band is now one shade
+     deeper, which cost this ink its margin — green-800 restores it, and every
+     other green in this palette is *on* a surface, so they all gain. */
+  --accent-green: #137333;
+  /* Google Blue 600 (#1a73e8) is 4.23:1 on this theme's sidebar — under AA.
+     Blue 700 is the same family one step down and clears it at 5.04:1. */
+  --accent-blue: #1967d2;
+  --accent-amber: #9a6700;
+  --accent-amber-bg: #fef7e0;
+  --fill-blue: #1967d2;                 /* white text = 5.37:1 */
+  --fill-blue-hover: #1457b0;           /* white text = 6.95:1 */
+  --green-tint: rgba(24, 128, 56, 0.08);
+  --blue-tint: rgba(25, 103, 210, 0.08);
+  --red-tint: rgba(207, 34, 46, 0.10);
+  --input-bg: #ffffff;
+  /* Was #edf7ed — 1 step off the page, so the focus queue had no band of its
+     own in this palette. Same green, one shade deeper. */
+  --focus-bar-bg: #e2f0e5;
+  --focus-bar-border: #188038;
+  --focus-ring: #1967d2;
+  --focus-ring-glow: rgba(25, 103, 210, 0.3);
+}
+
+/* Base Body */
+body {
+  font-family: var(--font-family);
+  background-color: var(--bg-page);
+  color: var(--text-main);
+  padding: var(--space-5);
+  line-height: 1.45;
+  font-size: var(--text-base);
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+/* The window is now the ground the sections sit on rather than a single sheet:
+   page-coloured, with a gutter and a gap that separate the islands. */
+.app-window {
+  max-width: 1060px;
+  margin: 0 auto;
+  background: var(--bg-page);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* =========================================================
+   GLOBAL ACCESSIBILITY
+   ========================================================= */
+
+/* Every interactive element must show where focus is. The old sheet set
+   `outline: none` on its text fields and never replaced it, so keyboard
+   navigation was invisible. */
+a:focus-visible,
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: var(--focus-ring-w) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Fields that live inside a pill or meta-field delegate their ring to the
+   wrapper, so the highlight follows the whole control rather than the
+   borderless inner input. */
+.datetime-pill .quick-field-input:focus-visible,
+.meta-field input:focus-visible,
+.meta-field select:focus-visible {
+  outline: none;
+}
+
+/* Respect the OS setting. The running-timer button used to pulse forever,
+   which is both distracting on the control you watch during a focus session
+   and a vestibular trigger. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Mode-Specific Switches */
+body.mode-gui .tui-label,
+body.mode-gui .tui-prompt-char,
+body.mode-gui .tui-prompt-symbol,
+body.mode-gui .tui-box-header,
+body.mode-gui .tui-box-footer,
+body.mode-gui .tui-text,
+body.mode-gui .icon-gui {
+  display: none !important;
+}
+
+body.mode-gui .gui-label,
+body.mode-gui .gui-box-header,
+body.mode-gui .gui-text,
+body.mode-gui .icon-tui {
+  display: inline-block;
+}
+
+body.mode-terminal .gui-label,
+body.mode-terminal .gui-box-header,
+body.mode-terminal .gui-text,
+body.mode-terminal .icon-tui {
+  display: none !important;
+}
+
+body.mode-terminal .tui-label,
+body.mode-terminal .tui-prompt-char,
+body.mode-terminal .tui-prompt-symbol,
+body.mode-terminal .tui-box-header,
+body.mode-terminal .tui-box-footer,
+body.mode-terminal .tui-text,
+body.mode-terminal .icon-gui {
+  display: inline-block;
+}
+
+/* =========================================================
+   VIEW SWITCHING (list vs day)
+   The day schedule is both a section of the home page and a view of its own.
+   In the list view it sits under the task workspace like any other section; the
+   toggle's remaining job is to hide the workspace so the schedule has the page
+   to itself. The focus queue stays visible either way — it is a persistent
+   working set rather than part of either view.
+   ========================================================= */
+body.view-day .main-layout {
+  display: none;
+}
+
+/* =========================================================
+   HEADER
+   The title and the macOS-style traffic lights are gone, so this strip now
+   holds nothing but the three controls. It wraps rather than overflowing —
+   at 360px the three buttons together are close to the full width.
+   ========================================================= */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-header);
+  color: var(--header-text);
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.ctrl-btn {
+  background: rgba(125, 125, 125, 0.18);
+  border: 1px solid var(--border-main);
+  color: var(--header-text);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: var(--space-2) var(--space-3);
+  min-height: var(--control-h);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+
+.ctrl-btn:hover {
+  background: rgba(125, 125, 125, 0.3);
+  border-color: var(--accent-blue);
+}
+
+/* =========================================================
+   TOP FOCUS QUEUE (VERTICAL LIST - UP TO 4 TASKS)
+   ========================================================= */
+.top-focus-bar {
+  background: var(--focus-bar-bg);
+  /* The green rail moves to the top edge now that this is a card rather than a
+     full-bleed band — it still marks the focus queue as the live one. */
+  border-top: 3px solid var(--focus-bar-border);
+  padding: var(--space-4) var(--space-5);
+}
+
+.focus-bar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--accent-green);
+  margin-bottom: var(--space-3);
+  letter-spacing: 0.5px;
+}
+
+.focus-tasks-vertical-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* With nothing queued the list is empty — the old prompt that used to fill it
+   is gone. Drop it and its trailing gap so the bar reads as a single compact
+   line rather than a heading above a void. */
+.focus-tasks-vertical-list:empty {
+  display: none;
+}
+
+.focus-bar-header:has(+ .focus-tasks-vertical-list:empty) {
+  margin-bottom: 0;
+}
+
+.focus-vertical-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-main);
+  border-left: 3px solid var(--accent-green);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  transition: box-shadow var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+
+.focus-vertical-item.is-running {
+  box-shadow: 0 0 6px rgba(45, 164, 78, 0.3);
+  background: var(--green-tint);
+}
+
+.focus-item-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.focus-rank-badge {
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  background: rgba(125, 125, 125, 0.15);
+  color: var(--text-dim);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-xs);
+  flex-shrink: 0;
+}
+
+.focus-vertical-item.is-running .focus-rank-badge {
+  background: var(--fill-green);
+  color: var(--on-fill);
+}
+
+.focus-item-title-text {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.focus-item-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.focus-live-timer {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--accent-green);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 80px;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
+.pulse-dot {
+  width: 6px;
+  height: 6px;
+  background-color: var(--accent-green);
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulse-animation 1.2s infinite;
+}
+
+@keyframes pulse-animation {
+  0% { transform: scale(0.9); opacity: 0.4; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.4; }
+}
+
+.btn-focus-action {
+  background: var(--fill-green);
+  border: 1px solid var(--fill-green);
+  color: var(--on-fill);
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+
+.btn-focus-action:hover:not(.running) {
+  background: var(--fill-green-hover);
+  border-color: var(--fill-green-hover);
+}
+
+.btn-focus-action.running {
+  background: var(--fill-red);
+  border-color: var(--fill-red);
+}
+
+.btn-focus-action.running:hover {
+  background: var(--fill-red-hover);
+  border-color: var(--fill-red-hover);
+}
+
+.btn-unque {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--text-md);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+  min-height: var(--control-h);
+  min-width: var(--control-h);
+  border-radius: var(--radius-xs);
+}
+
+.btn-unque:hover {
+  color: var(--accent-red);
+}
+
+/* =========================================================
+   SECTIONING
+   The top-level bands — the control strip, the focus queue, the task workspace
+   and the day schedule — used to share one continuous sheet divided only by a
+   hairline, and the schedule's background was identical to the window's in three
+   of the four palettes, so it did not read as a section at all. Each is now an
+   island: its own surface, border and radius, floating on the window's ground
+   with a gap between. Each also opens with a labelled header carrying a coloured
+   rail.
+   ========================================================= */
+
+/* Every island shares one frame. `overflow: hidden` keeps each island's own
+   header bar inside its rounded corners. */
+.app-header,
+.top-focus-bar,
+.main-layout,
+.day-view-section {
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* One label shape for every section header: a short rail, then the name. */
+.focus-bar-title,
+.header-title-box,
+.day-view-heading {
+  position: relative;
+  padding-left: var(--space-3);
+}
+
+.focus-bar-title::before,
+.header-title-box::before,
+.day-view-heading::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 14px;
+  border-radius: var(--radius-pill);
+}
+
+.focus-bar-title::before {
+  background: var(--focus-bar-border);
+}
+
+.header-title-box::before,
+.day-view-heading::before {
+  background: var(--accent-blue);
+}
+
+/* Dividers inside the sidebar, which previously ran its three sections
+   together with nothing but whitespace between them. */
+.sidebar-section + .sidebar-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-4);
+}
+
+/* The schedule's own surface. */
+.day-view-section {
+  background: var(--bg-section);
+}
+
+/* =========================================================
+   LAYOUT & SIDEBAR
+   ========================================================= */
+.main-layout {
+  display: flex;
+  min-height: 440px;
+  background: var(--bg-window);
+}
+
+.sidebar {
+  width: 230px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-main);
+  padding: var(--space-4) var(--space-4);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.section-heading {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  letter-spacing: 0.6px;
+  margin-bottom: var(--space-2);
+  font-weight: 700;
+}
+
+.nav-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  min-height: var(--control-h);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-main);
+  border: 1px solid transparent;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  transition: background-color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+
+.nav-item:hover {
+  background: var(--bg-card);
+  border-color: var(--border-subtle);
+}
+
+/* Was white on --accent-blue, which is 2.53:1 in the dark theme. */
+.nav-item.active {
+  background: var(--fill-blue);
+  color: var(--on-fill);
+  font-weight: 600;
+  border-color: var(--fill-blue);
+}
+
+.nav-item.observing-item.active {
+  background: var(--fill-amber);
+  border-color: var(--fill-amber);
+  color: var(--on-fill);
+}
+
+/* No fill. The tint this used to sit on was the whole problem: blue ink over a
+   blue tint resolves to 4.37:1 in the light GUI palette, under AA for the 12px
+   label. The dashed border already carries the affordance, so the fill goes. */
+.analytics-btn {
+  border: 1px dashed var(--accent-blue);
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+/* The pill fill goes with it — blue on a grey pill was 4.1:1, and over the
+   button's blue tint it was 3.7:1. Colour is inherited from the button, so the
+   hover state's white ink follows without a special case. */
+.analytics-btn .badge {
+  background: none;
+}
+
+.analytics-btn:hover {
+  background: var(--fill-blue);
+  border-style: solid;
+  color: var(--on-fill);
+}
+
+.badge {
+  font-size: var(--text-2xs);
+  background: rgba(125, 125, 125, 0.15);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+}
+
+.nav-item.active .badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: var(--on-fill);
+}
+
+.badge-observe {
+  background: var(--accent-amber-bg);
+  color: var(--accent-amber);
+  font-weight: 700;
+}
+
+/* Solid rather than tinted: green ink on a green tint measures 4.3:1 at this
+   11px size, under AA. The saturated fill with white on it clears it in every
+   palette. */
+.badge-done {
+  background: var(--fill-green);
+  color: var(--on-fill);
+  font-weight: 700;
+}
+
+.add-group-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.add-group-form input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+}
+
+.btn-add-group {
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  background: var(--fill-green);
+  color: var(--on-fill);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 700;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   CONTENT & TASK CARDS
+   ========================================================= */
+.content-area {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-5) var(--space-6);
+  background: var(--bg-window);
+  display: flex;
+  flex-direction: column;
+}
+
+.content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  /* Back to a hairline: this is a heading rule inside the workspace island, not
+     a boundary between sections. The island frames do that job now. */
+  border-bottom: 1px solid var(--border-main);
+  margin-bottom: var(--space-5);
+}
+
+.header-title-box {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.tui-prompt-symbol, .tui-prompt-char {
+  color: var(--accent-green);
+  font-weight: 700;
+}
+
+.content-header h3 {
+  font-size: var(--text-xl);
+  font-weight: 700;
+}
+
+.status-badge {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.tasks-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  margin-bottom: var(--space-5);
+}
+
+.empty-state {
+  text-align: center;
+  color: var(--text-dim);
+  padding: var(--space-7) var(--space-5);
+  font-size: var(--text-base);
+  border: 1px dashed var(--border-main);
+  border-radius: var(--radius-md);
+}
+
+/* Task Card */
+.task-card {
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-card);
+  transition: border-color var(--dur-fast) var(--ease),
+              box-shadow var(--dur-fast) var(--ease);
+}
+
+.task-card:hover {
+  border-color: var(--accent-blue);
+}
+
+.task-card.active-timing {
+  border-color: var(--accent-green);
+  box-shadow: 0 0 8px rgba(45, 164, 78, 0.25);
+}
+
+.task-card.in-queue {
+  border-left: 3px solid var(--accent-green);
+}
+
+.task-card.observing {
+  border-left: 4px solid var(--accent-amber);
+  background: var(--accent-amber-bg);
+}
+
+.task-card.completed {
+  opacity: 0.6;
+}
+
+.task-card.completed .task-title {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+
+.task-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.task-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.task-checkbox {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  accent-color: var(--fill-green);
+}
+
+.task-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.tag-group {
+  font-size: var(--text-2xs);
+  background: rgba(125, 125, 125, 0.15);
+  color: var(--text-main);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tag-observe {
+  font-size: var(--text-2xs);
+  background: var(--accent-amber-bg);
+  color: var(--accent-amber);
+  border: 1px solid var(--accent-amber);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tag-recur {
+  font-size: var(--text-2xs);
+  background: var(--blue-tint);
+  color: var(--accent-blue);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.task-tracked-time {
+  font-size: var(--text-2xs);
+  color: var(--accent-green);
+  font-weight: 700;
+  background: var(--green-tint);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Inline Time/Date quick edits */
+.datetime-pill {
+  /* Anchors the absolutely-positioned .hidden-picker. Without this the native
+     picker popup is positioned against the page origin instead of the pill. */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+}
+
+.datetime-pill:focus-within {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 var(--focus-ring-w) var(--focus-ring-glow);
+}
+
+.quick-field-input {
+  border: none;
+  background: transparent;
+  color: var(--input-text);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  outline: none;
+  width: 74px;
+  text-align: center;
+  min-height: 24px;
+}
+
+.quick-field-input.time-input {
+  width: 78px;
+}
+
+.btn-picker-trigger {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0 var(--space-1);
+  min-height: 24px;
+  min-width: 24px;
+  opacity: 0.75;
+  color: var(--text-main);
+  border-radius: var(--radius-xs);
+}
+
+.btn-picker-trigger:hover {
+  opacity: 1;
+}
+
+.hidden-picker {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Start / Stop Focus Timer Button */
+.btn-timer-toggle {
+  background: var(--green-tint);
+  border: 1px solid var(--accent-green);
+  color: var(--accent-green);
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease);
+}
+
+.btn-timer-toggle:hover {
+  background: var(--fill-green);
+  border-color: var(--fill-green);
+  color: var(--on-fill);
+}
+
+/* The red fill already says "running"; this used to also pulse forever. */
+.btn-timer-toggle.running {
+  background: var(--fill-red);
+  border-color: var(--fill-red);
+  color: var(--on-fill);
+}
+
+/* Queue Button Beside Start */
+.btn-que-toggle {
+  background: rgba(125, 125, 125, 0.15);
+  border: 1px solid var(--border-main);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: border-color var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease);
+}
+
+.btn-que-toggle:hover {
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+}
+
+.btn-que-toggle.in-queue {
+  background: var(--green-tint);
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+  font-weight: 700;
+}
+
+.btn-observe {
+  background: rgba(125, 125, 125, 0.15);
+  border: 1px solid var(--border-main);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+
+.btn-observe:hover {
+  border-color: var(--accent-amber);
+}
+
+.btn-observe.active {
+  background: var(--fill-amber);
+  color: var(--on-fill);
+  border-color: var(--fill-amber);
+  font-weight: 600;
+}
+
+.btn-delete {
+  background: none;
+  border: none;
+  color: var(--accent-red);
+  font-family: inherit;
+  font-size: var(--text-md);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  min-height: var(--control-h);
+  min-width: var(--control-h);
+  border-radius: var(--radius-xs);
+  line-height: 1;
+}
+
+.btn-delete:hover {
+  background: var(--red-tint);
+}
+
+/* Observation Log Box */
+.observe-box {
+  margin-top: var(--space-3);
+  background: var(--bg-window);
+  border: 1px dashed var(--accent-amber);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.observe-box-title {
+  color: var(--accent-amber);
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.observe-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.observe-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--bg-subtle);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+}
+
+.add-observe-form {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.add-observe-form input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-family: inherit;
+  border-radius: var(--radius-xs);
+}
+
+.add-observe-form button {
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  font-size: var(--text-2xs);
+  background: var(--fill-amber);
+  color: var(--on-fill);
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* Subtasks */
+.subtasks-section {
+  margin-top: var(--space-3);
+  padding-left: var(--space-6);
+  border-top: 1px dashed var(--border-main);
+  padding-top: var(--space-2);
+}
+
+.subtask-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.subtask-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.subtask-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.subtask-item.completed span {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+
+.add-subtask-form {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* Was a hard 220px, which overflowed every viewport narrower than ~420px. */
+.add-subtask-form input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-family: inherit;
+  border-radius: var(--radius-xs);
+}
+
+.add-subtask-form button {
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  min-width: 34px;
+  font-size: var(--text-2xs);
+  background: rgba(125, 125, 125, 0.18);
+  border: 1px solid var(--border-main);
+  color: var(--text-main);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   BOTTOM ADD TASK BOX
+   ========================================================= */
+.bottom-add-box {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-top: auto;
+}
+
+.gui-box-header {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  margin-bottom: var(--space-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tui-box-header, .tui-box-footer {
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  user-select: none;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.add-task-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.task-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.task-input-row input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+}
+
+.task-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.meta-field {
+  display: inline-flex;
+  align-items: center;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  gap: var(--space-1);
+}
+
+.meta-field:focus-within {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 var(--focus-ring-w) var(--focus-ring-glow);
+}
+
+.meta-label {
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.meta-field select,
+.meta-field input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--input-text);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  min-height: 24px;
+}
+
+.meta-field input {
+  width: 68px;
+}
+
+.btn-submit-task {
+  padding: var(--space-2) var(--space-5);
+  min-height: var(--control-h);
+  background: var(--fill-green);
+  color: var(--on-fill);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: var(--text-xs);
+  margin-left: auto;
+}
+
+.btn-submit-task:hover {
+  background: var(--fill-green-hover);
+}
+
+/* =========================================================
+   DAY VIEW SECTION
+   ========================================================= */
+.day-view-section {
+  /* background and frame come from the SECTIONING block above. */
+  padding: var(--space-5) var(--space-6);
+}
+
+.day-view-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-main);
+  margin-bottom: var(--space-4);
+}
+
+.day-view-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.day-view-heading h3 {
+  /* Same size as the task workspace's heading: these are peer section titles,
+     and they read as peers only if they are set the same. */
+  font-size: var(--text-xl);
+  font-weight: 700;
+}
+
+.day-nav-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.btn-nav {
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text-main);
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.day-date-picker {
+  padding: var(--space-1) var(--space-2);
+  min-height: var(--control-h);
+  font-size: var(--text-xs);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+}
+
+.btn-today {
+  padding: var(--space-1) var(--space-4);
+  min-height: var(--control-h);
+  background: var(--fill-blue);
+  color: var(--on-fill);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.day-date-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--accent-blue);
+  margin-left: var(--space-2);
+}
+
+.day-view-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.day-group-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.day-group-header {
+  background: var(--bg-sidebar);
+  padding: var(--space-3);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border-main);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.day-group-tasks {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* =========================================================
+   ANALYTICS MODAL WINDOW
+   ========================================================= */
+.analytics-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  z-index: 1000;
+}
+
+.analytics-modal.hidden {
+  display: none;
+}
+
+/* Global helper, used by the modal and available to anything else. */
+.hidden {
+  display: none !important;
+}
+
+/* =========================================================
+   UPDATE NOTICE
+   ========================================================= */
+
+/* A toast rather than a fifth island: fixed-position, outside .app-window, so
+   it never joins the layout or pushes the sections around. Sits above the
+   home indicator on an installed phone. */
+.update-bar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: calc(100vw - var(--space-5) * 2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: var(--bg-card);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  font-size: var(--text-sm);
+  color: var(--text-main);
+}
+
+.update-bar-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Not .ctrl-btn: that one paints --header-text, which is unreadable on the
+   toast's card surface in the light palettes. */
+.update-bar-btn {
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  padding: var(--space-2) var(--space-4);
+  min-height: var(--control-h);
+  background: var(--fill-blue);
+  color: var(--on-fill);
+  border: 1px solid var(--fill-blue);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.update-bar-btn:hover {
+  background: var(--fill-blue-hover);
+  border-color: var(--fill-blue-hover);
+}
+
+.analytics-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.analytics-window {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  max-height: 100%;
+  background: var(--bg-window);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 1001;
+}
+
+.analytics-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-header);
+  color: var(--header-text);
+  border-bottom: 1px solid var(--border-main);
+}
+
+.analytics-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.analytics-title-wrap h3 {
+  font-size: var(--text-md);
+  font-weight: 700;
+}
+
+.btn-close-modal {
+  background: none;
+  border: 1px solid var(--border-main);
+  color: var(--header-text);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* The rail and border carry the "this deletes" signal. Colouring the label
+   red would fail contrast in the light GUI theme, whose header is dark. */
+.btn-close-modal:hover {
+  background: rgba(207, 34, 46, 0.25);
+  border-color: var(--accent-red);
+}
+
+.analytics-body {
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  overflow-y: auto;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: var(--space-3);
+}
+
+.stat-card {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.stat-num {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--accent-blue);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+}
+
+.analytics-section-block h4 {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-3);
+}
+
+.group-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  margin-bottom: var(--space-2);
+}
+
+.progress-bar-wrap {
+  background: var(--border-main);
+  height: 8px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  margin-bottom: var(--space-3);
+}
+
+.progress-bar-fill {
+  background: var(--fill-blue);
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+/* =========================================================
+   TOUCH TARGETS
+   The card actions were ~20px tall (11px text, 3px padding) — about a third
+   of the 44px minimum, and awkward to hit one-handed. Applied only under a
+   coarse pointer so dense mouse layouts keep their compact feel.
+   ========================================================= */
+@media (pointer: coarse) {
+  .btn-timer-toggle,
+  .btn-que-toggle,
+  .btn-observe,
+  .btn-focus-action,
+  .btn-nav,
+  .btn-today,
+  .btn-submit-task,
+  .btn-add-group,
+  .btn-close-modal,
+  .add-observe-form button,
+  .add-subtask-form button,
+  .nav-item {
+    min-height: var(--control-h-touch);
+  }
+
+  .btn-delete,
+  .btn-unque,
+  .btn-picker-trigger {
+    min-height: var(--control-h-touch);
+    min-width: var(--control-h-touch);
+  }
+
+  /* The glyphs read too small once the target is this large. */
+  .btn-timer-toggle,
+  .btn-que-toggle,
+  .btn-observe,
+  .btn-focus-action,
+  .btn-delete,
+  .btn-picker-trigger {
+    font-size: var(--text-sm);
+  }
+
+  .task-checkbox {
+    width: 20px;
+    height: 20px;
+  }
+
+  .focus-vertical-item {
+    padding-top: var(--space-4);
+    padding-bottom: var(--space-4);
+  }
+}
+
+/* =========================================================
+   RESPONSIVE
+   The sheet previously had no media queries at all. At 360px the 230px
+   sidebar left ~98px for the task list and the layout simply overflowed.
+   ========================================================= */
+@media (max-width: 760px) {
+  body {
+    padding: 0;
+  }
+
+  .app-window {
+    max-width: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    /* Tighter gutter, but the gaps stay so the islands keep reading as islands. */
+    padding: var(--space-3);
+    gap: var(--space-3);
+  }
+
+  /* The workspace is a tall island on a phone; the sidebar strip would push the
+     task list far below the fold, so the island drops its minimum height. */
+  .main-layout {
+    min-height: 0;
+  }
+
+  .app-header {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .top-focus-bar {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  /* Sidebar becomes a set of labelled horizontal strips. */
+  .main-layout {
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-main);
+    padding: var(--space-3) var(--space-4);
+    gap: var(--space-3);
+  }
+
+  .nav-list {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: var(--space-2);
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .add-group-form {
+    max-width: 320px;
+  }
+
+  .content-area,
+  .day-view-section {
+    padding: var(--space-4);
+  }
+
+  .task-card {
+    padding: var(--space-3);
+  }
+
+  .task-header {
+    align-items: flex-start;
+  }
+
+  /* Actions move to their own row so they can be full-width and thumb-sized. */
+  .task-left {
+    flex-basis: 100%;
+  }
+
+  .task-actions {
+    width: 100%;
+  }
+
+  .task-actions > button {
+    flex: 1 1 auto;
+  }
+
+  .subtasks-section {
+    padding-left: var(--space-4);
+  }
+
+  .analytics-modal {
+    padding: 0;
+  }
+
+  .analytics-window {
+    border-radius: 0;
+    max-height: 100%;
+    height: 100%;
+  }
+
+  /* iOS Safari zooms the viewport whenever a focused field is under 16px,
+     and several of these are 12px. Sizing them at 16px on small screens is
+     the only reliable way to stop the page lurching on every tap. */
+  input,
+  select,
+  textarea {
+    font-size: var(--text-lg) !important;
+  }
+
+  .quick-field-input,
+  .quick-field-input.time-input {
+    width: 96px;
+  }
+
+  .meta-field input {
+    width: 84px;
+  }
+}
+
+/* Notch and home-indicator clearance in standalone mode. Requires
+   viewport-fit=cover on the viewport meta tag. The window's own padding is the
+   gutter every island sits inside, so the insets belong here — one place —
+   rather than on each island's padding. */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .app-window {
+    padding-left: max(var(--space-4), env(safe-area-inset-left));
+    padding-right: max(var(--space-4), env(safe-area-inset-right));
+    padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  }
+}

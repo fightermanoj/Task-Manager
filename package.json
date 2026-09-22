@@ -1,0 +1,13 @@
+{
+  "name": "task-management",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Task list, focus queue and day schedule. Three static files, no build step.",
+  "scripts": {
+    "icons": "node scripts/generate-icons.js",
+    "test": "node tests/run.js"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.2"
+  }
+}

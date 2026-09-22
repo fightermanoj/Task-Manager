@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- viewport-fit=cover lets the safe-area env() insets in style.css do their
+       job when the app is installed to a notched device's home screen. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Task Manager</title>
+
+  <!-- Installable-app plumbing. `theme_color` here is what tints the phone's
+       status bar in standalone mode; the two media-scoped ones let it follow
+       the in-app theme rather than being stuck on whichever is written first.
+       iOS ignores manifest.json icons and looks for apple-touch-icon at the
+       site root, so that link is what stops an installed iOS PWA showing a
+       blank tile. -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#161b22" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Tasks" />
+  <!-- `black-translucent` lets the app's own background run under the status
+       bar; style.css then keeps content clear of it with the env() insets. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<!-- view-list / view-day is applied by applyView(); the default here mirrors the
+     default in app.js so the first paint matches before the script runs. -->
+<body class="mode-terminal theme-dark view-list">
+  <div class="app-window" id="app-window">
+    <!-- Header / Top Bar. The traffic-light dots and the "Task Manager" title
+         have been removed: the app is not a desktop window, and the browser tab
+         already carries the name. The header is now purely the control strip. -->
+    <header class="app-header">
+      <!-- Controls: View Switcher, UI Mode Switcher & Dark/Light Toggle.
+           The view toggle lives here rather than beside the content header
+           because the content header is inside .main-layout, which is hidden
+           while Day View is showing — a toggle there would hide itself. -->
+      <div class="header-controls">
+        <button id="view-mode-btn" class="ctrl-btn" title="Switch between the task list and the day schedule"
+                aria-label="Switch to Day View">
+          <span id="view-icon-label">📅 Day View</span>
+        </button>
+        <button id="ui-mode-btn" class="ctrl-btn ui-toggle-btn" title="Toggle between Terminal & Modern UI">
+          <span class="icon-gui">🖥️ Modern UI</span>
+          <span class="icon-tui">📟 Terminal UI</span>
+        </button>
+        <button id="theme-toggle-btn" class="ctrl-btn theme-toggle-btn" title="Toggle Dark / Light Theme">
+          <span id="theme-icon">🌙 Dark</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Top Focus Bar: Vertical Queued Tasks (up to 4) -->
+    <section class="top-focus-bar" id="top-focus-bar">
+      <div class="focus-bar-header">
+        <span class="focus-bar-title">🎯 FOCUS QUEUE</span>
+        <span class="focus-bar-subtitle" id="focus-bar-count">0 / 4 queued</span>
+      </div>
+      <div class="focus-tasks-vertical-list" id="focus-tasks-list">
+        <!-- Up to 4 queued tasks rendered in vertical order -->
+      </div>
+    </section>
+
+    <!-- Main Layout -->
+    <div class="main-layout">
+      <!-- Sidebar: Views, Groups & Analytics -->
+      <aside class="sidebar">
+        <!-- Views Section -->
+        <div class="sidebar-section">
+          <div class="section-heading">
+            <span class="gui-label">Views</span>
+            <span class="tui-label">┌─ [ 01: VIEWS ] ──────────┐</span>
+          </div>
+          <ul id="view-list" class="nav-list">
+            <!-- Rendered by JS -->
+          </ul>
+        </div>
+
+        <!-- Groups Section -->
+        <div class="sidebar-section">
+          <div class="section-heading">
+            <span class="gui-label">Groups</span>
+            <span class="tui-label">┌─ [ 02: GROUPS ] ─────────┐</span>
+          </div>
+          <ul id="group-list" class="nav-list">
+            <!-- Populated by JS -->
+          </ul>
+          <form id="add-group-form" class="add-group-form">
+            <span class="tui-prompt-char" aria-hidden="true">$</span>
+            <input type="text" id="new-group-input" placeholder="New group..." aria-label="New group name" required />
+            <button type="submit" class="btn-add-group">+</button>
+          </form>
+        </div>
+
+        <!-- Analytics Trigger in Left Sidebar -->
+        <div class="sidebar-section analytics-nav-section">
+          <div class="section-heading">
+            <span class="gui-label">Analytics</span>
+            <span class="tui-label">┌─ [ 03: STATS ] ──────────┐</span>
+          </div>
+          <button id="open-analytics-btn" class="nav-item analytics-btn" title="Open Productivity Analytics">
+            <span>📊 View Analytics</span>
+            <span class="badge" id="sidebar-total-time">0h 0m</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Main Content Area: Task List -->
+      <main class="content-area">
+        <div class="content-header">
+          <div class="header-title-box">
+            <span class="tui-prompt-symbol" aria-hidden="true">❯</span>
+            <h3 id="current-group-title">All Tasks</h3>
+          </div>
+          <div id="task-count" class="status-badge" aria-live="polite">0 tasks</div>
+        </div>
+
+        <!-- Task List Container -->
+        <div id="tasks-container" class="tasks-container">
+          <!-- Tasks and subtasks rendered dynamically -->
+        </div>
+
+        <!-- Add Task Form at Bottom -->
+        <div class="bottom-add-box">
+          <div class="tui-box-header">┌─ [ ADD NEW TASK ] ──────────────────────────────────────────</div>
+          <h4 class="gui-box-header">+ Add New Task</h4>
+          
+          <form id="add-task-form" class="add-task-form">
+            <div class="task-input-row">
+              <span class="tui-prompt-char" aria-hidden="true">task></span>
+              <input
+                type="text"
+                id="task-title-input"
+                placeholder="What needs to be done? (e.g. Server backup 10:20am 22-9)"
+                aria-label="Task title, for example: Server backup 10:20am 22-9"
+                required
+              />
+            </div>
+            
+            <div class="task-meta-row">
+              <!-- These were <span>s, so the visible text was never actually
+                   associated with its field. A <label for> wires it up without
+                   any CSS change. -->
+              <div class="meta-field">
+                <label class="meta-label" for="task-group-select">Group:</label>
+                <select id="task-group-select" required></select>
+              </div>
+
+              <div class="meta-field">
+                <label class="meta-label" for="task-date-input">Date:</label>
+                <input type="text" id="task-date-input" placeholder="22-9" title="Type 22-9 or today" />
+                <!-- Purely programmatic openers for the native pickers. Hidden from
+                     both the tab order and the accessibility tree — the visible
+                     text field beside each one carries the real value. -->
+                <input type="date" id="task-date-picker-hidden" class="hidden-picker" tabindex="-1" aria-hidden="true" />
+                <button type="button" class="btn-picker-trigger" id="open-date-picker-btn" title="Pick date" aria-label="Pick date">📅</button>
+              </div>
+
+              <div class="meta-field">
+                <label class="meta-label" for="task-time-input">Time:</label>
+                <input type="text" id="task-time-input" placeholder="9am" title="Type 9am, 10:20pm" />
+                <input type="time" id="task-time-picker-hidden" class="hidden-picker" tabindex="-1" aria-hidden="true" />
+                <button type="button" class="btn-picker-trigger" id="open-time-picker-btn" title="Pick time" aria-label="Pick time">⏰</button>
+              </div>
+
+              <div class="meta-field">
+                <label class="meta-label" for="task-recur-select">Repeat:</label>
+                <select id="task-recur-select">
+                  <option value="none">No Repeat</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+              </div>
+
+              <button type="submit" class="btn-submit-task">
+                <span class="gui-text">Add Task</span>
+                <span class="tui-text">[ + EXECUTE ]</span>
+              </button>
+            </div>
+          </form>
+          <div class="tui-box-footer">└─────────────────────────────────────────────────────────────</div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Day View Section -->
+    <section class="day-view-section">
+      <div class="day-view-header">
+        <div class="day-view-heading">
+          <span class="tui-prompt-symbol" aria-hidden="true">❯</span>
+          <h3>Day View Schedule</h3>
+        </div>
+        <div class="day-nav-controls">
+          <button id="prev-day-btn" class="btn-nav">&larr; Prev</button>
+          <input type="date" id="day-view-picker" class="day-date-picker" aria-label="Jump to a date" />
+          <button id="next-day-btn" class="btn-nav">Next &rarr;</button>
+          <button id="today-btn" class="btn-today">Today</button>
+          <span id="day-view-date-label" class="day-date-label"></span>
+        </div>
+      </div>
+
+      <div id="day-view-container" class="day-view-container">
+        <!-- Group sections and tasks rendered here -->
+      </div>
+    </section>
+  </div>
+
+  <!-- Analytics Modal / Window Overlay -->
+  <div id="analytics-modal" class="analytics-modal hidden" role="dialog" aria-modal="true" aria-labelledby="analytics-title">
+    <div class="analytics-modal-backdrop" id="analytics-backdrop"></div>
+    <div class="analytics-window">
+      <div class="analytics-header">
+        <div class="analytics-title-wrap">
+          <span class="tui-prompt-symbol" aria-hidden="true">📊</span>
+          <h3 id="analytics-title">Productivity Analytics & Work Hours</h3>
+        </div>
+        <button id="close-analytics-btn" class="btn-close-modal" title="Close" aria-label="Close analytics">[ ✕ Close ]</button>
+      </div>
+      <div class="analytics-body" id="analytics-content">
+        <!-- Filled dynamically by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Update notice. Deliberately a sibling of .app-window rather than a
+       section inside it: it is transient, and as a fixed-position toast it
+       leaves the island layout alone. Hidden until a new service worker is
+       waiting. -->
+  <div class="update-bar hidden" id="update-bar" role="status" aria-live="polite">
+    <span class="update-bar-text">A new version is ready.</span>
+    <button class="update-bar-btn" id="update-bar-btn" type="button">Reload</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

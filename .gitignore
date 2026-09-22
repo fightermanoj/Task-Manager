@@ -1,0 +1,18 @@
+# Dependencies — only ever needed to regenerate the icons or run the tests.
+# Nothing the deployed app serves comes from here.
+node_modules/
+
+# Vercel's local project link, created by `vercel link`.
+.vercel/
+
+# Phase 2: real Supabase credentials. config.example.js is the committed
+# template; config.js holds the project URL and anon key and stays local.
+# (The anon key is safe to ship — RLS is the enforcement boundary — but keeping
+# it out of the repo means a fork cannot silently point at your project. The
+# service_role key must never appear here in any form.)
+config.js
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
