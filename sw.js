@@ -15,7 +15,7 @@
 //     offline costs nothing. Calling respondWith() there would turn a harmless
 //     font miss into a thrown error.
 
-const VERSION = 'tm-v2';
+const VERSION = 'tm-v4';
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -50,6 +50,12 @@ const OPTIONAL = [
   // one must cost the app nothing worse than no sign-in, never a failed install.
   './config.js',
   './vendor/supabase.js',
+  // Self-hosted fonts. Optional rather than core for the same reason: style.css
+  // declares a full fallback stack for both families, so a missing font costs a
+  // typeface and nothing else — whereas a typo'd path in CORE would fail
+  // addAll and leave the app with no service worker at all.
+  './fonts/inter-latin.woff2',
+  './fonts/firacode-latin.woff2',
   './icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -147,4 +153,30 @@ self.addEventListener('fetch', event => {
   if (STATIC_EXTENSIONS.test(url.pathname)) {
     event.respondWith(staleWhileRevalidate(event, request, RUNTIME_CACHE));
   }
+});
+
+// Reminders are shown by the page calling registration.showNotification(), which
+// is the only reason this handler is here: a notification's click is delivered to
+// the worker, not to the page.
+//
+// An existing window is focused rather than a second one opened. The app is a
+// single window, and a second would be a second reader of the same localStorage
+// tasks racing the first.
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const taskId = (event.notification.data && event.notification.data.taskId) || '';
+
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      if ('focus' in client) {
+        // The page scrolls the task into view. Sent as a message rather than put
+        // in the URL: the app is one page whose URL is the shell's cache key, so
+        // a query string here would give every reminder its own shell entry.
+        if (taskId) client.postMessage({ type: 'REMINDER_CLICKED', taskId });
+        return client.focus();
+      }
+    }
+    if (self.clients.openWindow) return self.clients.openWindow('./');
+  })());
 });

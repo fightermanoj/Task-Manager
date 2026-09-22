@@ -99,16 +99,62 @@ const localStorageStub = {
 // Capture the 1s tick and the setTimeout/setInterval callbacks instead of running them.
 let tickFn = null;
 const setIntervalStub = (fn) => { tickFn = fn; return 1; };
-const setTimeoutStub = () => 1;
 const clearIntervalStub = () => {};
+// Timeouts are captured rather than run. Both users of setTimeout here — the
+// delete-undo expiry and the reminder minute tick — are "call me later", and a
+// test that cannot reach the callback cannot prove the undo window ever closes.
+// Ids are 1-based so they are truthy, and clearing nulls the slot, which is what
+// a real cancellation looks like to the code holding the handle.
+const timeoutCallbacks = [];
+const setTimeoutStub = (fn) => {
+  timeoutCallbacks.push(fn);
+  return timeoutCallbacks.length;
+};
+const clearTimeoutStub = (id) => {
+  if (typeof id === 'number' && id > 0) timeoutCallbacks[id - 1] = null;
+};
+const runTimeout = (id) => {
+  const fn = timeoutCallbacks[id - 1];
+  timeoutCallbacks[id - 1] = null;
+  if (typeof fn === 'function') fn();
+};
+const lastTimeoutId = () => timeoutCallbacks.length;
 
 const makeWindowStub = () => ({
   addEventListener() {},
   removeEventListener() {},
   matchMedia: () => ({ matches: false, addEventListener() {} }),
-  location: { origin: 'http://localhost', href: 'http://localhost/', protocol: 'http:' }
+  // hostname matters: canRegisterServiceWorker() accepts https or localhost, so
+  // omitting it would make the sandbox a context the app never runs in and put
+  // every reminders path permanently out of reach. This models `npm start` on
+  // localhost, which is where reminders are actually developed.
+  location: {
+    origin: 'http://localhost', href: 'http://localhost/',
+    protocol: 'http:', hostname: 'localhost'
+  }
 });
 const windowStub = makeWindowStub();
+
+// ---- fake notifications -----------------------------------------------------
+// The reminders control is hidden outright unless Notification and
+// navigator.serviceWorker both exist, so a sandbox without them could never
+// exercise checkReminders. `permission` is mutable so a test can flip to denied.
+let notificationPermission = 'granted';
+const shownNotifications = [];
+const NotificationStub = {
+  get permission() { return notificationPermission; },
+  requestPermission: async () => notificationPermission
+};
+const navigatorStub = {
+  userAgent: 'node',
+  serviceWorker: {
+    ready: Promise.resolve({
+      showNotification(title, options) { shownNotifications.push({ title, options }); }
+    }),
+    addEventListener() {},
+    register: async () => ({})
+  }
+};
 
 let alertMessage = null;
 const alertStub = (m) => { alertMessage = m; };
@@ -117,14 +163,15 @@ const alertStub = (m) => { alertMessage = m; };
 const src = SRC;
 const fn = new Function(
   'window', 'document', 'localStorage', 'setInterval', 'setTimeout', 'clearInterval',
-  'crypto', 'Date', 'console', 'navigator', 'alert', 'location',
+  'clearTimeout', 'crypto', 'Date', 'console', 'navigator', 'alert', 'location',
+  'Notification',
   `${src}\n;return window.TM;`
 );
 
 const TM = fn(
   windowStub, documentStub, localStorageStub, setIntervalStub, setTimeoutStub,
-  clearIntervalStub, globalThis.crypto, FakeDate, console,
-  { userAgent: 'node' }, alertStub, windowStub.location
+  clearIntervalStub, clearTimeoutStub, globalThis.crypto, FakeDate, console,
+  navigatorStub, alertStub, windowStub.location, NotificationStub
 );
 
 // ---- assertions -------------------------------------------------------------
@@ -301,11 +348,21 @@ storage.set('tm_tasks', JSON.stringify([
 // onto `window` at load time, so a shared stub means every extra boot silently
 // re-points windowStub.toggleTask (and friends) at the newest instance — the
 // original TM would then look inert.
-const boot = () => fn(
-  makeWindowStub(), documentStub, localStorageStub, setIntervalStub, setTimeoutStub,
-  clearIntervalStub, globalThis.crypto, FakeDate, console,
-  { userAgent: 'node' }, alertStub, { origin: 'http://localhost', href: 'http://localhost/', protocol: 'http:' }
-);
+// The app assigns its handlers onto whichever `window` it was given, so each
+// boot gets its own stub and the tests must call through that one. Reaching for
+// the shared windowStub after a boot would call the *first* instance's handler,
+// which closes over a different `tasks` array and silently does nothing.
+let bootWindow = null;
+const boot = () => {
+  bootWindow = makeWindowStub();
+  return fn(
+    bootWindow, documentStub, localStorageStub, setIntervalStub, setTimeoutStub,
+    clearIntervalStub, clearTimeoutStub, globalThis.crypto, FakeDate, console,
+    navigatorStub, alertStub,
+    { origin: 'http://localhost', href: 'http://localhost/', protocol: 'http:', hostname: 'localhost' },
+    NotificationStub
+  );
+};
 const TM2 = boot();
 const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
 check('legacy task id re-keyed to a UUID', isUuid(TM2.tasks[0].id), TM2.tasks[0].id);
@@ -591,5 +648,359 @@ check('a non-array assignment does not break the bridge',
   (() => { TMseam.tasks = {}; return Array.isArray(TMseam.tasks) && TMseam.tasks.length === 0; })(),
   'TM.tasks = {} left the app holding a non-array');
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
-process.exit(fail === 0 ? 0 : 1);
+/* ===========================================================================
+   Recurrence, the queue cap, the unnamed-year rule, delete/undo and reminders.
+   =========================================================================== */
+
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const plusDays = (dateStr, n) => {
+  const d = new RealDate(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return iso(d);
+};
+const weekdayOf = (dateStr) => new RealDate(dateStr + 'T00:00:00').getDay();
+const hhmm = (ms) => {
+  const d = new RealDate(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+console.log('\n[24] Completing a recurring task rolls it forward');
+{
+  const T = TM.today();
+  // Plain objects, not normalizeTask: advanceRecurrence only touches recur,
+  // dueDate, completed and completedAt, and a normaliser in the way would blur
+  // which of those the assertions are actually testing.
+  const mk = (dueDate, recur) => ({
+    id: TM.newId(), title: 'r', group: 'Work', dueDate, recur,
+    completed: false, completedAt: ''
+  });
+
+  const overdue = mk(plusDays(T, -5), 'daily');
+  check('a daily task five days overdue lands tomorrow, not on the day it missed',
+    TM.advanceRecurrence(overdue) === true && overdue.dueDate === plusDays(T, 1),
+    `got "${overdue.dueDate}"`);
+  check('and it comes back un-ticked with its stamp cleared',
+    overdue.completed === false && overdue.completedAt === '');
+
+  const dueToday = mk(T, 'daily');
+  check('a task due today moves to tomorrow',
+    TM.advanceRecurrence(dueToday) && dueToday.dueDate === plusDays(T, 1),
+    `got "${dueToday.dueDate}"`);
+
+  // The do/while rather than a while: a task completed ahead of its date must
+  // still advance, or it would come back un-ticked on the same future date.
+  const ahead = mk(plusDays(T, 3), 'daily');
+  check('a task due in the future still advances by a full step',
+    TM.advanceRecurrence(ahead) && ahead.dueDate === plusDays(T, 4),
+    `got "${ahead.dueDate}"`);
+
+  const fortnight = mk(plusDays(T, -14), 'weekly');
+  check('a fortnight-overdue weekly task lands a week out',
+    TM.advanceRecurrence(fortnight) && fortnight.dueDate === plusDays(T, 7),
+    `got "${fortnight.dueDate}"`);
+  check('and keeps its weekday',
+    weekdayOf(fortnight.dueDate) === weekdayOf(plusDays(T, -14)),
+    `got weekday ${weekdayOf(fortnight.dueDate)}`);
+
+  const once = mk(T, 'none');
+  check('a non-recurring task is left exactly alone',
+    TM.advanceRecurrence(once) === false && once.dueDate === T && once.completed === false);
+
+  const broken = mk('not-a-date', 'daily');
+  check('a corrupted due date is refused rather than stepped forever',
+    TM.advanceRecurrence(broken) === false && broken.dueDate === 'not-a-date',
+    `got "${broken.dueDate}"`);
+}
+
+// Through the real completion path, which is where the reported bug lived: a
+// recurring task used to stay ticked with its original date, so `daily` meant
+// "reminds you once, ever".
+{
+  storage.clear();
+  const R = boot();
+  const id = R.newId();
+  R.tasks = [{ id, title: 'water the plants', group: 'Work', dueDate: R.today(), recur: 'daily' }];
+  const liveId = R.tasks[0].id;
+  bootWindow.toggleTask(liveId);
+  check('ticking a daily task re-dates it and leaves it un-ticked',
+    R.tasks[0].dueDate === plusDays(R.today(), 1) && R.tasks[0].completed === false,
+    `due=${R.tasks[0].dueDate} completed=${R.tasks[0].completed}`);
+  check('so it stays on the board instead of collecting in Completed',
+    R.isArchived(R.tasks[0]) === false);
+  check('and it is on today\'s agenda again tomorrow, not today',
+    R.isTaskOnDate(R.tasks[0], R.today()) === false &&
+    R.isTaskOnDate(R.tasks[0], plusDays(R.today(), 1)) === true,
+    'the rolled-forward task is not reachable on its new date');
+}
+
+console.log('\n[25] The focus queue cap counts what it hides');
+{
+  storage.clear();
+  const Q = boot();
+  const T = Q.today();
+  const many = [];
+  for (let i = 0; i < 6; i++) {
+    many.push({ id: Q.newId(), title: `q${i}`, group: 'Work', dueDate: T });
+  }
+  Q.tasks = many;
+  const ids = Q.tasks.map(t => t.id);
+
+  check('the cap is four', Q.FOCUS_QUEUE_MAX === 4, `got ${Q.FOCUS_QUEUE_MAX}`);
+  check('nothing is queued to begin with', Q.focusBarLoad() === 0);
+
+  ids.slice(0, 4).forEach(id => bootWindow.toggleTaskQueue(id));
+  check('four queued tasks fill it', Q.focusBarLoad() === 4);
+  check('and all four are shown', Q.focusBarTasks().length === 4);
+
+  // A running timer is pinned ahead of an idle queued task: the thing you are
+  // actually working on should never be what falls off the end.
+  bootWindow.toggleTaskTimer(ids[5]);
+  const shown = Q.focusBarTasks();
+  check('a running timer takes a slot', shown.length === Q.FOCUS_QUEUE_MAX);
+  check('and is ranked first', shown[0].id === ids[5], `first is ${shown[0].title}`);
+  check('the load now counts the timer as well as the queue', Q.focusBarLoad() === 5,
+    `got ${Q.focusBarLoad()}`);
+
+  Q.renderAll();
+  check('the count reports the overflow rather than pretending',
+    /\+1 not shown/.test(getEl('focus-bar-count').textContent),
+    `got "${getEl('focus-bar-count').textContent}"`);
+  check('and still names the cap',
+    getEl('focus-bar-count').textContent.includes(`/ ${Q.FOCUS_QUEUE_MAX} queued`),
+    `got "${getEl('focus-bar-count').textContent}"`);
+
+  // Starting a timer while the bar is full must not queue a fifth — but the
+  // timer itself is not the queue flag and has to run regardless.
+  const spare = Q.tasks.find(t => !t.queued && !t.isTiming);
+  bootWindow.toggleTaskTimer(spare.id);
+  check('a timer started on a full bar does not queue a fifth',
+    spare.queued === false, 'it was queued past the cap');
+  check('but the timer still runs', spare.isTiming === true);
+  check('and it is reachable through the bar', Q.focusBarTasks().some(t => t.id === spare.id));
+}
+
+console.log('\n[26] An unnamed year in a date edit is not taken literally');
+{
+  const yr = TM.today().slice(0, 4);
+  // Unpadded, matching the field's own placeholder ("Type 22-9 or today").
+  check('a date in the current year displays without a year',
+    TM.formatDateEditable(`${yr}-09-22`) === '22-9', `got "${TM.formatDateEditable(`${yr}-09-22`)}"`);
+  check('a date in another year has to carry it, or the edit would retarget it',
+    TM.formatDateEditable('2025-09-22') === '22-9-2025',
+    `got "${TM.formatDateEditable('2025-09-22')}"`);
+
+  storage.clear();
+  const Y = boot();
+  const nextYear = String(Number(yr) + 1);
+  Y.tasks = [{ id: Y.newId(), title: 'renew passport', group: 'Work', dueDate: `${nextYear}-05-10` }];
+  const yId = Y.tasks[0].id;
+
+  // The bug: the field shows DD-MM, so editing the day used to re-derive the
+  // whole date against *this* year and quietly drag the task back a year.
+  bootWindow.handleCardDateInput(yId,'12-5');
+  check('editing the day keeps the task in its own year',
+    Y.tasks[0].dueDate === `${nextYear}-05-12`, `got "${Y.tasks[0].dueDate}"`);
+
+  bootWindow.handleCardDateInput(yId,'12-5-2027');
+  check('but a year typed in full is honoured',
+    Y.tasks[0].dueDate === '2027-05-12', `got "${Y.tasks[0].dueDate}"`);
+
+  bootWindow.handleCardDateInput(yId,'not-a-date');
+  check('and junk still reverts instead of storing',
+    Y.tasks[0].dueDate === '2027-05-12', `got "${Y.tasks[0].dueDate}"`);
+}
+
+console.log('\n[27] A deleted task can be brought back');
+{
+  storage.clear();
+  const U = boot();
+  const subId = U.newId();
+  U.tasks = [
+    { id: U.newId(), title: 'keep me', group: 'Work', dueDate: U.today(),
+      subtasks: [{ id: subId, title: 'a child', completed: false }],
+      observeNotes: [{ id: U.newId(), text: 'a note', createdAt: 1 }] },
+    { id: U.newId(), title: 'other', group: 'Work', dueDate: U.today() }
+  ];
+  const keepId = U.tasks[0].id;
+  const otherId = U.tasks[1].id;
+
+  bootWindow.deleteTask(otherId);
+  check('the delete is immediate', !U.tasks.some(t => t.id === otherId));
+  check('and it reaches storage immediately', JSON.parse(storage.get('tm_tasks')).length === 1,
+    'the task was only hidden, not deleted');
+  check('the undo bar is offered', !getEl('undo-bar').classList.contains('hidden'));
+  check('and it names what went', /other/.test(getEl('undo-bar-text').textContent),
+    `got "${getEl('undo-bar-text').textContent}"`);
+
+  handlers['undo-bar-btn:click']();
+  check('undo puts it back', U.tasks.some(t => t.id === otherId));
+  check('at its original index', U.tasks[1] && U.tasks[1].id === otherId,
+    `landed at ${U.tasks.findIndex(t => t.id === otherId)}`);
+  check('and the bar goes away', getEl('undo-bar').classList.contains('hidden'));
+  check('the restore is persisted too',
+    JSON.parse(storage.get('tm_tasks')).some(t => t.id === otherId));
+
+  handlers['undo-bar-btn:click']();
+  check('a second undo does not duplicate it',
+    U.tasks.filter(t => t.id === otherId).length === 1);
+
+  // A task carries its subtasks and notes; losing them to a misclick is the
+  // whole reason this bar exists, so the restore has to bring them back.
+  bootWindow.deleteTask(keepId);
+  handlers['undo-bar-btn:click']();
+  const restored = U.tasks.find(t => t.id === keepId);
+  check('a restored task keeps its subtasks',
+    restored.subtasks.length === 1 && restored.subtasks[0].id === subId,
+    JSON.stringify(restored.subtasks));
+  check('and its observation notes', restored.observeNotes.length === 1,
+    JSON.stringify(restored.observeNotes));
+
+  // The window is the point: an undo offered forever is a second delete button.
+  bootWindow.deleteTask(otherId);
+  const undoId = lastTimeoutId();
+  check('the bar is up again', !getEl('undo-bar').classList.contains('hidden'));
+  bootWindow.deleteTask(keepId);
+  check('a second delete re-arms the window rather than stacking one',
+    lastTimeoutId() === undoId + 1, 'a stale timer was left running');
+
+  runTimeout(lastTimeoutId());
+  check('the window closes on its own', getEl('undo-bar').classList.contains('hidden'));
+  handlers['undo-bar-btn:click']();
+  check('and a late undo does nothing',
+    !U.tasks.some(t => t.id === keepId), 'an expired undo still restored the task');
+}
+
+(async () => {
+  console.log('\n[28] Reminders fire once, on time, for the right tasks');
+  const T = TM.today();
+  const dateStr = T;
+  const nowHHMM = hhmm(FAKE_NOW);
+  const laterHHMM = hhmm(FAKE_NOW + 10 * 60000);
+
+  storage.clear();
+  const RM = boot();
+  const todayStr = RM.today();
+
+  check('a supporting browser reports reminders as available',
+    RM.remindersSupported() === true);
+  check('but they are off until opted in', RM.remindersOn() === false,
+    'reminders ran without the user asking');
+
+  storage.set(RM.REMINDERS_ON_KEY, '1');
+  check('the stored opt-in turns them on', RM.remindersOn() === true);
+
+  const mk = (over) => Object.assign({
+    id: RM.newId(), title: 'remind me', group: 'Work',
+    dueDate: todayStr, time: nowHHMM, recur: 'none',
+    completed: false, observing: false
+  }, over);
+
+  RM.tasks = [
+    mk({ title: 'due now' }),
+    mk({ title: 'already done', completed: true }),
+    mk({ title: 'waiting on someone', observing: true }),
+    mk({ title: 'later today', time: laterHHMM }),
+    mk({ title: 'no time set', time: '' })
+  ];
+  const dueNow = RM.tasks[0];
+  const firedMap = () => JSON.parse(storage.get(RM.FIRED_KEY) || '{}');
+  const dueAt = (task) => RM.reminderInstant(task, todayStr);
+
+  check('a task time becomes an instant on the day',
+    !Number.isNaN(dueAt(dueNow)), 'reminderInstant returned NaN');
+  check('a task with no usable time is not a reminder',
+    Number.isNaN(dueAt(RM.tasks[4])));
+
+  const shownBefore = shownNotifications.length;
+  RM.checkReminders();
+  const afterFirst = firedMap();
+  check('exactly one task is claimed, not five', Object.keys(afterFirst).length === 1,
+    JSON.stringify(Object.keys(afterFirst)));
+
+  const keyOf = (task) => RM.firedKey(task, todayStr);
+  check('and it is the one that is due', !!afterFirst[keyOf(dueNow)]);
+  check('a completed task is never claimed', !afterFirst[keyOf(RM.tasks[1])],
+    'it reminded about finished work');
+  check('an observed task is never claimed', !afterFirst[keyOf(RM.tasks[2])],
+    'it reminded about work waiting on someone else');
+  check('a task whose time has not come is not claimed', !afterFirst[keyOf(RM.tasks[3])],
+    'it fired up to ten minutes early');
+  check('a task with no time is not claimed', !afterFirst[keyOf(RM.tasks[4])]);
+
+  // Without the fired map a 30s poll re-notifies every 30 seconds for a whole
+  // minute, which is the single most likely way to get this wrong.
+  RM.checkReminders();
+  check('a second check does not claim it again',
+    Object.keys(firedMap()).length === 1, 'the same reminder fired twice');
+
+  // The path is registration.showNotification, not `new Notification()`: the
+  // constructor throws on Android Chrome and does not exist in an installed
+  // iOS PWA, so asserting the call landed is asserting the feature works.
+  for (let i = 0; i < 4; i++) await Promise.resolve();
+  check('the notice went out through the service worker registration',
+    shownNotifications.length === shownBefore + 1 &&
+    shownNotifications[shownBefore].options.tag === `task-${dueNow.id}`,
+    `shown=${shownNotifications.length - shownBefore} tag=${shownNotifications[0] && shownNotifications[0].options.tag}`);
+  check('with the task title and a body naming group and time',
+    shownNotifications[shownBefore].title === 'due now' &&
+    /Work/.test(shownNotifications[shownBefore].options.body),
+    JSON.stringify(shownNotifications[shownBefore]));
+
+  // A suspended tab has its timers throttled, so the minute tick can be missed
+  // outright. Coming back to the page is the moment to catch it up.
+  const missedHHMM = hhmm(FAKE_NOW + 60000);
+  advance(2 * 60000);
+  RM.tasks = [mk({ title: 'missed while suspended', time: missedHHMM })];
+  RM.checkReminders();
+  const caught = firedMap();
+  check('a reminder that came due while the page was suspended is caught up',
+    Object.keys(caught).length === 2 && !!caught[keyOf(RM.tasks[0])],
+    JSON.stringify(Object.keys(caught)));
+
+  // Recurrence matches through isTaskOnDate. A `dueDate === today` check would
+  // remind once and then never again for the rest of the series.
+  advance(24 * 3600 * 1000);
+  RM.tasks = [mk({
+    title: 'daily standup', dueDate: plusDays(RM.today(), -3),
+    recur: 'daily', time: hhmm(FAKE_NOW)
+  })];
+  RM.checkReminders();
+  check('a recurring task reminds again on a later day',
+    Object.keys(firedMap()).length === 3,
+    'the daily task only ever reminded once');
+
+  // Opting out has to stop the checks, not merely hide the button.
+  storage.set(RM.REMINDERS_ON_KEY, '0');
+  RM.tasks = [mk({ title: 'silent', time: hhmm(FAKE_NOW) })];
+  const beforeOff = Object.keys(firedMap()).length;
+  RM.checkReminders();
+  check('opting out stops it claiming anything new',
+    Object.keys(firedMap()).length === beforeOff, 'reminders ran while switched off');
+
+  notificationPermission = 'denied';
+  check('a denied permission reads as denied', RM.reminderPermission() === 'denied');
+  RM.renderReminderButton();
+  const btn = getEl('reminders-btn');
+  check('the control says blocked rather than offering a click that cannot work',
+    btn.disabled === true && /blocked/i.test(btn.textContent), `"${btn.textContent}"`);
+  check('and it explains what to do instead',
+    /browser settings/i.test(btn.title), `"${btn.title}"`);
+  // A click while blocked must not flip the opt-in on, which would leave the app
+  // claiming reminders are enabled while nothing can ever fire.
+  storage.set(RM.REMINDERS_ON_KEY, '0');
+  await RM.toggleReminders();
+  check('a click while blocked leaves reminders off',
+    RM.remindersOn() === false && storage.get(RM.REMINDERS_ON_KEY) === '0',
+    `on=${RM.remindersOn()} key=${storage.get(RM.REMINDERS_ON_KEY)}`);
+
+  notificationPermission = 'granted';
+  RM.renderReminderButton();
+  check('with permission granted the control is live again',
+    btn.disabled === false && !btn.classList.contains('hidden'), `"${btn.textContent}"`);
+  await RM.toggleReminders();
+  check('and a click once granted does switch them on', RM.remindersOn() === true,
+    `key=${storage.get(RM.REMINDERS_ON_KEY)}`);
+
+  console.log(`\n${pass} passed, ${fail} failed\n`);
+  process.exit(fail === 0 ? 0 : 1);
+})();

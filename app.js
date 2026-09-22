@@ -189,6 +189,13 @@ const DEFAULT_GROUPS = ['Home', 'Work', 'Personal'];
 
 const RECUR_VALUES = ['none', 'daily', 'weekly'];
 
+// How many tasks the focus queue holds. Declared up here rather than beside the
+// renderer that uses it, because applyUIMode() below calls renderAll() during
+// boot: a `const` referenced before its declaration is a TDZ crash, and a boot
+// crash lands above every listener — the app would paint once and then ignore
+// every click.
+const FOCUS_QUEUE_MAX = 4;
+
 // Shape checks for parsed values. These are `const`, so they must be declared above
 // every load-time caller — a function declaration hoists, but its `const` body
 // dependencies do not, and referencing one early is a hard TDZ crash on boot.
@@ -347,6 +354,12 @@ const closeAnalyticsBtn = document.getElementById('close-analytics-btn');
 const analyticsModal = document.getElementById('analytics-modal');
 const analyticsBackdrop = document.getElementById('analytics-backdrop');
 const analyticsContent = document.getElementById('analytics-content');
+
+// Delete undo. Declared with the other refs so nothing below can reach it before
+// it exists.
+const undoBar = document.getElementById('undo-bar');
+const undoBarText = document.getElementById('undo-bar-text');
+const undoBarBtn = document.getElementById('undo-bar-btn');
 
 // --- Timer Engine ---
 
@@ -551,30 +564,51 @@ function isTaskOnDate(task, dateStr) {
   return false;
 }
 
+// What the focus bar shows: running timers first, then queued tasks, capped.
+// A running timer takes a slot ahead of an idle queued one — the task you are
+// actually working on should never be the one that falls off the end. Ordering
+// within each group is by the explicit stamp, not array order, which does not
+// survive a round-trip through a database.
+function focusBarTasks() {
+  const byStamp = (a, b) => (a.queuedAt || 0) - (b.queuedAt || 0);
+  const running = tasks.filter(t => t.isTiming).sort(byStamp);
+  const queued = tasks.filter(t => t.queued && !t.isTiming).sort(byStamp);
+  return running.concat(queued).slice(0, FOCUS_QUEUE_MAX);
+}
+
+// Everything competing for a slot, whether or not the bar can show it. This is
+// what the queue button caps on, so starting a timer cannot push the total past
+// the cap behind the button's back — which is exactly how a fifth task used to
+// get queued while the bar rendered four.
+function focusBarLoad() {
+  return tasks.filter(t => t.queued || t.isTiming).length;
+}
+
 // Render Top Focus Bar in Vertical Order (Max 4 queued tasks)
 function renderFocusBar() {
   if (!focusTasksList) return;
-  // Queued (or currently running) tasks, up to 4, in the order they were
-  // queued. Sorting by an explicit stamp rather than relying on array order,
-  // which does not survive a round-trip through a database.
-  const queuedList = tasks
-    .filter(t => t.queued || t.isTiming)
-    .sort((a, b) => (a.queuedAt || 0) - (b.queuedAt || 0))
-    .slice(0, 4);
+  const shown = focusBarTasks();
 
   if (focusBarCount) {
-    focusBarCount.textContent = `${queuedList.length} / 4 queued`;
+    // Says so when something is over the cap rather than quietly dropping it. A
+    // task the bar cannot show still exists and still has a timer or a queue
+    // flag on it; a count reading "4 / 4" while a fifth sits queued is how that
+    // goes unnoticed.
+    const hidden = focusBarLoad() - shown.length;
+    focusBarCount.textContent = hidden > 0
+      ? `${shown.length} / ${FOCUS_QUEUE_MAX} queued (+${hidden} not shown)`
+      : `${shown.length} / ${FOCUS_QUEUE_MAX} queued`;
   }
 
   // Nothing queued: render nothing. The header line above still reports the
   // count, and the CSS collapses the bar so it does not leave a gap where the
   // prompt used to be.
-  if (queuedList.length === 0) {
+  if (shown.length === 0) {
     focusTasksList.innerHTML = '';
     return;
   }
 
-  focusTasksList.innerHTML = queuedList.map((task, idx) => `
+  focusTasksList.innerHTML = shown.map((task, idx) => `
     <div class="focus-vertical-item ${task.isTiming ? 'is-running' : ''}">
       <div class="focus-item-left">
         <span class="focus-rank-badge" aria-hidden="true">#${idx + 1}</span>
@@ -694,7 +728,7 @@ function renderTaskCardHtml(task, ctx = 'list') {
     : '';
 
   const timeVal = task.time ? formatTime12Hour(task.time) : '';
-  const dateVal = task.dueDate ? formatDateDDMM(task.dueDate) : '';
+  const dateVal = task.dueDate ? formatDateEditable(task.dueDate) : '';
 
   const elapsed = computeElapsedSeconds(task);
   const timerLabel = (elapsed > 0 || task.isTiming)
@@ -1103,14 +1137,44 @@ function migrateCompletedAt() {
 // where they are, so ticking a box never makes the row vanish from under the
 // cursor.
 //
-// Recurring tasks are the exception. Completion does not reset a recurrence in this
-// app, so a `daily` task completed yesterday is still flagged completed forever —
-// archiving it purely on the stamp would hide it permanently. A recurring task is
-// therefore only archived once its next occurrence is not today.
+// The recurrence clause below is a safety net rather than the main path now:
+// completing a recurring task rolls it forward (advanceRecurrence), so it never
+// sits completed to begin with. Tasks already stored as completed by an earlier
+// version are still out there, though, and archiving one of those purely on the
+// stamp would hide it permanently — so a recurring task is only archived once
+// its next occurrence is not today.
 function isArchived(task) {
   if (!task.completed || task.completedAt === '') return false;
   if (task.completedAt === today()) return false;
   if (task.recur !== 'none' && isTaskOnDate(task, today())) return false;
+  return true;
+}
+
+// Completing a recurring task means it is done for *this* occurrence, not
+// forever. Nothing used to clear the tick: isTaskOnDate kept advancing the day
+// the task was shown on, so a `daily` task ticked once stayed struck through
+// permanently.
+//
+// The next date comes from stepping the due date until it lands strictly after
+// today, rather than from adding a single interval. A weekly task left untouched
+// for a fortnight has to come back on its weekday, not on the day it was ticked.
+function advanceRecurrence(task) {
+  if (task.recur !== 'daily' && task.recur !== 'weekly') return false;
+  const step = task.recur === 'daily' ? 1 : 7;
+
+  const start = task.dueDate ? new Date(task.dueDate + 'T00:00:00') : new Date(today() + 'T00:00:00');
+  if (Number.isNaN(start.getTime())) return false;
+  const from = new Date(today() + 'T00:00:00');
+
+  // At least one step, so completing something due in the future still advances
+  // it. Bounded, because an unbounded date loop is not a thing to leave in a tab
+  // that a corrupted `dueDate` could otherwise hang.
+  let guard = 0;
+  do { start.setDate(start.getDate() + step); } while (start <= from && guard++ < 4000);
+
+  task.dueDate = getLocalDateString(start);
+  task.completed = false;
+  task.completedAt = '';
   return true;
 }
 
@@ -1129,6 +1193,30 @@ function isValidDateString(value) {
   // Round-tripping rejects impossible dates like 2026-02-31, which JS would
   // otherwise silently normalise to March 3rd.
   return getLocalDateString(new Date(value + 'T00:00:00')) === value;
+}
+
+// The card's date field is DD-MM, so the year it is stored under is normally
+// invisible. These two are the two halves of making sure it cannot change
+// without the user seeing it: display the year whenever it is not the current
+// one, and preserve it whenever an edit does not name one itself.
+function formatDateEditable(dateStr) {
+  if (!dateStr) return '';
+  const short = formatDateDDMM(dateStr);
+  // formatDateDDMM hands back its argument unchanged when it is not a real
+  // date, and there is no year to append to something unparseable.
+  if (short === dateStr) return short;
+  const year = dateStr.slice(0, 4);
+  return year === String(new Date().getFullYear()) ? short : `${short}-${year}`;
+}
+
+// Keeps the year a task already had when the new value does not name one.
+// Without this, editing "22-9" on a task due in 2027 re-parsed it with the
+// *current* year and quietly moved it back a year.
+function withExistingYear(parsed, existing) {
+  if (!isValidDateString(parsed) || !isValidDateString(existing)) return parsed;
+  const candidate = existing.slice(0, 4) + parsed.slice(4);
+  // 29 Feb does not survive a move to a non-leap year; keep the parsed value.
+  return isValidDateString(candidate) ? candidate : parsed;
 }
 
 function showPickerElement(el) {
@@ -1343,11 +1431,16 @@ window.handleCardDateInput = function(taskId, rawValue) {
     task.dueDate = '';
   } else {
     const parsed = parseDateString(raw);
-    if (!isValidDateString(parsed)) {
+    // Does the raw text name a year itself? Only then is the parsed year what
+    // the user meant; otherwise it is parseDateString's default of the current
+    // year, and the task's own year has to be kept instead.
+    const namedYear = DATE_SHAPE.test(raw) || /^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/.test(raw);
+    const resolved = namedYear ? parsed : withExistingYear(parsed, task.dueDate);
+    if (!isValidDateString(resolved)) {
       renderAll();
       return;
     }
-    task.dueDate = parsed;
+    task.dueDate = resolved;
   }
   saveToStorage();
   renderAll();
@@ -1364,9 +1457,14 @@ window.toggleTaskTimer = function(taskId) {
   } else {
     task.isTiming = true;
     task.timerStartedAt = Date.now();
-    // Auto-queue if timer started
-    task.queued = true;
-    if (!task.queuedAt) task.queuedAt = Date.now();
+    // Auto-queue so a started timer is pinned in the bar — but never past the
+    // cap. The bar renders four, so queueing a fifth would start a timer it
+    // never shows. The timer itself still runs either way: a running task
+    // reaches the bar through isTiming, not through the queue flag.
+    if (!task.queued && focusBarLoad() < FOCUS_QUEUE_MAX) {
+      task.queued = true;
+      task.queuedAt = Date.now();
+    }
   }
   saveToStorage();
   renderAll();
@@ -1381,9 +1479,10 @@ window.toggleTaskQueue = function(taskId) {
     task.queued = false;
     task.queuedAt = null;
   } else {
-    const currentQueuedCount = tasks.filter(t => t.queued || t.isTiming).length;
-    if (currentQueuedCount >= 4) {
-      alert('Focus queue is full (max 4 tasks). Please un-queue or complete a task first.');
+    // Counts running timers as well as queued tasks: both occupy a slot, so
+    // capping on `queued` alone would let a running timer push the total over.
+    if (focusBarLoad() >= FOCUS_QUEUE_MAX) {
+      alert(`Focus queue is full (max ${FOCUS_QUEUE_MAX} tasks). Please un-queue or complete a task first.`);
       return;
     }
     task.queued = true;
@@ -1452,6 +1551,10 @@ window.toggleTask = function(taskId) {
     // Stamped so tonight's rollover can tell this apart from work finished on an
     // earlier day and move it to the Completed view.
     task.completedAt = today();
+    // A recurring task rolls on to its next occurrence instead of collecting in
+    // the Completed view forever. Clearing `completed` here is the whole fix —
+    // it is what was missing.
+    advanceRecurrence(task);
   } else {
     task.completedAt = '';
   }
@@ -1459,10 +1562,59 @@ window.toggleTask = function(taskId) {
   renderAll();
 };
 
-window.deleteTask = function(taskId) {
-  tasks = tasks.filter(t => t.id !== taskId);
+// DELETING
+// The delete itself stays immediate, so the sync layer sees exactly what it saw
+// before any of this existed — a task that lingers in the array until a toast
+// expires would be uploaded and then un-uploaded. What is held back is only the
+// removed object, which is enough to put it back.
+//
+// Undo survives a sync that already pushed the tombstone: restoring re-adds a
+// task the server has no record of at a newer timestamp, so observe() queues an
+// upsert that overwrites the tombstone in the ordinary way.
+const UNDO_WINDOW_MS = 8000;
+let undoEntry = null;
+let undoTimer = null;
+
+function clearUndo() {
+  if (undoTimer !== null) {
+    clearTimeout(undoTimer);
+    undoTimer = null;
+  }
+  undoEntry = null;
+  if (undoBar) undoBar.classList.add('hidden');
+}
+
+function offerUndo(task, index) {
+  // Markup missing: the delete still happened, it is simply not undoable.
+  if (!undoBar || !undoBarBtn) return;
+  if (undoTimer !== null) clearTimeout(undoTimer);
+  undoEntry = { task, index };
+  if (undoBarText) undoBarText.textContent = `Deleted "${task.title || 'task'}".`;
+  undoBar.classList.remove('hidden');
+  undoTimer = setTimeout(clearUndo, UNDO_WINDOW_MS);
+}
+
+function restoreUndo() {
+  if (!undoEntry) return;
+  const { task, index } = undoEntry;
+  clearUndo();
+  // Already back — a pull can legitimately have re-added it in the meantime.
+  if (tasks.some(t => t.id === task.id)) return;
+  // Back at its old position, so the list does not reshuffle around it.
+  tasks.splice(Math.min(Math.max(index, 0), tasks.length), 0, task);
   saveToStorage();
   renderAll();
+}
+
+if (undoBarBtn) undoBarBtn.addEventListener('click', restoreUndo);
+
+window.deleteTask = function(taskId) {
+  const index = tasks.findIndex(t => t.id === taskId);
+  if (index === -1) return;
+  const [removed] = tasks.splice(index, 1);
+  saveToStorage();
+  renderAll();
+  offerUndo(removed, index);
 };
 
 window.handleAddSubtask = function(e, taskId) {
@@ -1505,6 +1657,13 @@ window.deleteSubtask = function(taskId, subtaskId) {
   saveToStorage();
   renderAll();
 };
+
+// Storage keys the reminders own. Declared up here, above the bridge, rather
+// than beside the code that uses them: `const` is not hoisted, and the window.TM
+// object literal below is evaluated as the file loads, so reading one of these
+// from inside it before its own declaration is a TDZ crash at boot.
+const REMINDERS_ON_KEY = 'tm_reminders_on';
+const FIRED_KEY = 'tm_fired_reminders';
 
 // --- Bridge for later phases ---
 // This file is a classic script: `function` declarations become window properties,
@@ -1556,6 +1715,32 @@ window.TM = {
   isValidDateString,
   checkpointRunningTimers,
   settleTaskTimer,
+  // Recurrence roll-forward, the focus-queue cap, and the date-edit helpers.
+  // Exported because each has a rule worth asserting directly rather than
+  // through the renderer: the roll-forward must skip past today rather than
+  // landing on it, the cap counts what is hidden, and an unnamed year in a date
+  // edit must not silently retarget the task to a different year.
+  advanceRecurrence,
+  focusBarTasks,
+  focusBarLoad,
+  FOCUS_QUEUE_MAX,
+  formatDateEditable,
+  withExistingYear,
+
+  // Reminders. checkReminders() is called directly by the tests, because the
+  // timer that normally drives it is armed to a minute boundary and a test
+  // cannot wait for one.
+  checkReminders,
+  reminderInstant,
+  firedKey,
+  remindersOn,
+  remindersSupported,
+  reminderPermission,
+  renderReminderButton,
+  toggleReminders,
+  armReminderTick,
+  REMINDERS_ON_KEY,
+  FIRED_KEY,
 
   // localStorage keys, kept in one place so sync code cannot drift from the app.
   KEYS: { groups: 'tm_groups', tasks: 'tm_tasks', theme: 'tm_theme', uiMode: 'tm_ui_mode', view: 'tm_view' }
@@ -1644,6 +1829,252 @@ function wireServiceWorker() {
 }
 
 window.addEventListener('load', wireServiceWorker);
+
+/* =========================================================
+   REMINDERS
+   ========================================================= */
+
+// Reminders fire only while the app is open — a tab, or an installed window.
+// There is no server, no push subscription and no background sync, so closing
+// the app means no reminder. That is the trade this is built on, and it is why
+// the feature needs no Edge Function, no VAPID keys and no subscriptions table.
+// Everything below is exactly the part a later server-side push would replace.
+//
+// Three things it has to get right, each of which is a way this is normally
+// broken:
+//
+//   * Recurrence, not date equality. `dueDate === today` reminds you once and
+//     never again for a recurring task. isTaskOnDate already handles daily and
+//     weekly, so it is reused rather than reimplemented.
+//   * Fire once. Without a record of what has already fired, every check within
+//     the scheduled minute notifies again.
+//   * registration.showNotification(), not `new Notification()`. The
+//     constructor throws `Illegal constructor` on Android Chrome and does not
+//     exist at all in an installed iOS PWA — the two devices this is for.
+
+// How far back a check reaches for reminders that came due while the page was
+// suspended. Long enough to cover a closed laptop lid, short enough that opening
+// the app after lunch is not a wall of stale notices.
+const MISSED_WINDOW_MS = 5 * 60 * 1000;
+
+let reminderTimer = null;
+let lastReminderCheck = Date.now();
+
+const minuteFloor = (ms) => Math.floor(ms / 60000) * 60000;
+
+// Notifications need a secure origin, a worker to display them, and permission.
+// Any one missing means the control is not offered at all.
+function remindersSupported() {
+  return typeof Notification !== 'undefined' &&
+    typeof navigator !== 'undefined' &&
+    'serviceWorker' in navigator &&
+    canRegisterServiceWorker();
+}
+
+function reminderPermission() {
+  return remindersSupported() ? Notification.permission : 'unsupported';
+}
+
+function remindersOn() {
+  return reminderPermission() === 'granted' && readStored(REMINDERS_ON_KEY) === '1';
+}
+
+function loadFired() {
+  const raw = loadJson(FIRED_KEY, {});
+  return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+}
+
+// Bounded to a week. The key would otherwise gain one entry per task per day
+// forever on a device that has been reminding for a year.
+function saveFired(map) {
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const trimmed = {};
+  Object.keys(map).forEach(k => { if (map[k] >= cutoff) trimmed[k] = map[k]; });
+  try { localStorage.setItem(FIRED_KEY, JSON.stringify(trimmed)); }
+  catch (err) { /* storage blocked; the next check retries */ }
+}
+
+// The instant this task's reminder falls due on the given day, or NaN. A task
+// with no usable time is not a reminder.
+function reminderInstant(task, dateStr) {
+  if (!isValidTimeString(task.time)) return NaN;
+  const at = new Date(`${dateStr}T${task.time}:00`).getTime();
+  return Number.isNaN(at) ? NaN : at;
+}
+
+function reminderBody(task) {
+  const when = task.time ? formatTime12Hour(task.time) : '';
+  return [task.group, when].filter(Boolean).join(' · ') || 'Scheduled now';
+}
+
+async function notifyTask(task) {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification(task.title || 'Task', {
+      body: reminderBody(task),
+      // Per task, so a repeat collapses onto the existing notice rather than
+      // stacking a second one beside it.
+      tag: `task-${task.id}`,
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      data: { taskId: task.id }
+    });
+  } catch (err) {
+    // A notification that will not show must not take the app down with it.
+    console.warn('Could not show a reminder', err);
+  }
+}
+
+// A function declaration rather than an arrow bound to a `const`, so it is
+// hoisted and the bridge above can reference it.
+function firedKey(task, dateStr) {
+  return `${task.id}|${dateStr}|${task.time}`;
+}
+
+// Fires everything that has come due since the last check, at most once each.
+// Called on the minute boundary, and again whenever the page becomes visible so
+// a reminder that came due while the tab was suspended is caught up rather than
+// silently skipped.
+function checkReminders() {
+  const now = Date.now();
+  const from = Math.max(lastReminderCheck, now - MISSED_WINDOW_MS);
+  lastReminderCheck = now;
+
+  if (!remindersOn()) return;
+
+  const dateStr = today();
+  const fired = loadFired();
+  const due = [];
+
+  tasks.forEach(task => {
+    // An observed task is waiting on somebody else; a completed one is done.
+    if (task.completed || task.observing) return;
+    if (!isTaskOnDate(task, dateStr)) return;
+
+    const at = reminderInstant(task, dateStr);
+    if (Number.isNaN(at)) return;
+    // Floored to the minute on both sides. The tick is armed to land just after
+    // the boundary, so comparing raw milliseconds would make this depend on
+    // sub-second timing.
+    if (minuteFloor(at) < minuteFloor(from) || minuteFloor(at) > minuteFloor(now)) return;
+
+    const key = firedKey(task, dateStr);
+    if (fired[key]) return;
+    fired[key] = now;
+    due.push(task);
+  });
+
+  if (due.length === 0) return;
+  saveFired(fired);
+  due.forEach(notifyTask);
+}
+
+// Armed to the next minute boundary rather than polled: an interval drifts, and
+// a check that lands up to 30s late is a reminder that is up to 30s late. The
+// offset puts the tick just past the boundary, so the minute being checked has
+// actually started.
+function armReminderTick() {
+  if (reminderTimer !== null) clearTimeout(reminderTimer);
+  const now = Date.now();
+  reminderTimer = setTimeout(() => {
+    reminderTimer = null;
+    checkReminders();
+    armReminderTick();
+  }, Math.max(250, minuteFloor(now) + 60000 - now + 200));
+}
+
+function renderReminderButton() {
+  const btn = document.getElementById('reminders-btn');
+  if (!btn) return;
+
+  if (!remindersSupported()) {
+    btn.classList.add('hidden');
+    return;
+  }
+  btn.classList.remove('hidden');
+
+  if (reminderPermission() === 'denied') {
+    // Permission never re-prompts once denied, so this says what to do rather
+    // than offering a button that would silently do nothing.
+    btn.disabled = true;
+    btn.textContent = '🔕 Reminders blocked';
+    btn.title = 'Notifications are blocked for this site. Allow them in your browser settings and reload — a page cannot ask a second time.';
+    return;
+  }
+
+  btn.disabled = false;
+  const on = remindersOn();
+  btn.textContent = on ? '🔔 Reminders on' : '🔔 Enable reminders';
+  btn.title = on
+    ? 'Reminders are on. They fire while the app is open, and not once it is closed.'
+    : 'Get a notification at a task\'s scheduled time, while the app is open.';
+}
+
+async function toggleReminders() {
+  const permission = reminderPermission();
+  if (permission === 'denied' || permission === 'unsupported') return;
+
+  if (remindersOn()) {
+    try { localStorage.setItem(REMINDERS_ON_KEY, '0'); } catch (err) { /* storage blocked */ }
+    renderReminderButton();
+    return;
+  }
+
+  // Requested from a real click. A request made on load is rejected or silently
+  // ignored, and iOS is strictest about it.
+  let granted = permission;
+  if (granted !== 'granted') granted = await Notification.requestPermission();
+
+  if (granted === 'granted') {
+    try { localStorage.setItem(REMINDERS_ON_KEY, '1'); } catch (err) { /* storage blocked */ }
+    // Anything already due in this minute is worth saying now, rather than
+    // waiting for the next boundary.
+    lastReminderCheck = Date.now();
+    checkReminders();
+    armReminderTick();
+  }
+  renderReminderButton();
+}
+
+function initReminders() {
+  const btn = document.getElementById('reminders-btn');
+  if (btn) btn.addEventListener('click', toggleReminders);
+
+  // A tapped reminder. The worker focuses this window and posts the task id, and
+  // bringing that task into view is the only thing that makes the tap feel
+  // answered. Best-effort: the task may be gone, completed, or filtered out of
+  // whatever view is on screen, and focusing the window is then the whole of it.
+  if (remindersSupported() && typeof navigator.serviceWorker.addEventListener === 'function') {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || data.type !== 'REMINDER_CLICKED' || !data.taskId) return;
+      const card = document.getElementById(`task-card-list-${data.taskId}`) ||
+        document.getElementById(`task-card-day-${data.taskId}`);
+      if (!card || typeof card.scrollIntoView !== 'function') return;
+      const reduceMotion = typeof matchMedia === 'function' &&
+        matchMedia('(prefers-reduced-motion: reduce)').matches;
+      card.scrollIntoView({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' });
+    });
+  }
+
+  renderReminderButton();
+  if (!remindersSupported()) return;
+  armReminderTick();
+}
+
+// A suspended tab has its timers throttled, so the minute tick can be missed
+// outright. Returning to view is the moment to catch up.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') checkReminders();
+});
+
+// bfcache restore re-runs no timers, so the span since the freeze is only
+// observable here.
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) checkReminders();
+});
+
+initReminders();
 
 // The initial render runs last, after the update prompt's listener is attached.
 // If it throws — a stored value the renderer chokes on, markup that outran it —

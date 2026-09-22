@@ -228,5 +228,84 @@ check('the migration drops both triggers for an existing project',
 check('and rebuilds the index',
   /create unique index if not exists task_groups_user_name_key/.test(migration));
 
+console.log('\n[sec-10] Reminders work on the devices this app is for');
+const app = contents.get('app.js') || '';
+// These checks are about code, but the strings they look for also appear in the
+// comments explaining why neither is used — `// not \`new Notification()\`` and
+// `// no VAPID keys and no subscriptions table`. Matching prose would flag the
+// documentation for the decision as a violation of it, which is how a check
+// ends up being ignored. Strip comments first, then look.
+const codeOnly = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+const sqlOnly = (src) => src.replace(/^\s*--.*$/gm, '');
+const appCode = codeOnly(app);
+const swCode = codeOnly(sw);
+const syncCode = codeOnly(sync);
+
+// new Notification() throws `Illegal constructor` on Android Chrome and does
+// not exist at all in an installed iOS PWA — the two devices this feature
+// exists for. The registration path is the only one that works on both, so the
+// constructor appearing even once is the feature silently not working.
+check('the notice goes out through the service worker registration',
+  /\.showNotification\(/.test(appCode));
+check('the constructor that throws on mobile is never used',
+  !/new Notification\(/.test(appCode),
+  'it fails on Android Chrome and is undefined on an installed iOS PWA');
+// A request made on load is rejected or silently ignored, and once denied the
+// API never prompts again, so the button is the only route in.
+check('the permission prompt is inside the click handler',
+  /async function toggleReminders[\s\S]*?Notification\.requestPermission\(\)[\s\S]*?\n\}/.test(appCode),
+  'a request made at load would be ignored, and denial is permanent');
+check('a denied permission is surfaced rather than offered as a dead click',
+  /permission\s*===\s*'denied'/i.test(appCode) && /blocked/i.test(appCode));
+check('duplicate notices collapse onto one tag', /tag:\s*`task-\$\{/.test(appCode));
+check('a fired reminder is recorded, so it cannot fire twice',
+  /FIRED_KEY/.test(appCode) && /fired\[key\]/.test(appCode));
+check('the click is routed back to the task it is about',
+  /REMINDER_CLICKED/.test(swCode) && /REMINDER_CLICKED/.test(appCode),
+  'a click is delivered to the worker, so dropping it loses the tap');
+// Reminders are client-side only by decision: no Edge Function, no VAPID, no
+// subscription table. Any of these appearing in code means that decision was
+// undone somewhere without the rest of it following.
+check('no server-side push machinery was introduced',
+  !/push_subscriptions|VAPID|web-push|applicationServerKey/i.test(
+    [appCode, swCode, syncCode, sqlOnly(contents.get('sql/schema.sql') || '')].join('\n')),
+  'client-side reminders need no server state');
+// And independently: the schema really has no subscription table.
+check('the schema has no subscription table',
+  !/create table[^;]*push_subscriptions/i.test(sqlOnly(contents.get('sql/schema.sql') || '')));
+
+console.log('\n[sec-11] Nothing is fetched from a third party');
+const css = contents.get('style.css') || '';
+// The app used to take its typefaces from Google Fonts. That was the only
+// cross-origin request it made, it made the first paint wait on a DNS lookup
+// plus a round trip, and offline it silently swapped the typeface — most
+// visible in terminal mode, where the monospace grid is the whole design.
+check('the fonts are served from this origin',
+  /@font-face\s*\{[^}]*src:\s*url\('fonts\//.test(css),
+  'no self-hosted @font-face rule');
+check('every font file it names is actually present',
+  [...css.matchAll(/url\('(fonts\/[^']+)'\)/g)].map(m => m[1])
+    .every(p => tracked.includes(p)),
+  'a @font-face points at a file that would 404');
+check('both families and all four weights are covered',
+  ['Fira Code', 'Inter'].every(f =>
+    [400, 500, 600, 700].every(w =>
+      new RegExp(`font-family:\\s*'${f}'[^}]*font-weight:\\s*${w}`).test(css))),
+  'a weight the sheet asks for would be synthesised or substituted');
+check('the Google Fonts stylesheet link is gone',
+  !/fonts\.googleapis\.com/.test(html), 'index.html still links a remote stylesheet');
+check('and its preconnects went with it',
+  !/fonts\.gstatic\.com/.test(html) && !/<link[^>]+rel="preconnect"/.test(html),
+  'a preconnect to a host nothing is fetched from is a wasted connection');
+// With no remote stylesheet there is no external stylesheet origin left, and
+// with no remote script there is no external script origin — which is what
+// makes a same-origin-only policy possible at all.
+check('the app makes no cross-origin request at all',
+  !/https?:\/\//.test(html.replace(/https:\/\/task-manager[^\s"']*/g, '')) &&
+  !/url\(\s*['"]?https?:/.test(css),
+  'something in the markup or sheet is still fetched from another host');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

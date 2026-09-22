@@ -24,9 +24,12 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Fonts are self-hosted from fonts/ via @font-face at the top of style.css.
+       The Google Fonts <link> and its two preconnects are gone: they were the
+       app's only third-party request, they made the first paint wait on a
+       cross-origin round trip, and offline they silently fell back to a
+       different typeface. Self-hosting is also what makes a strict
+       font-src/style-src possible. -->
   <link rel="stylesheet" href="style.css" />
 </head>
 <!-- view-list / view-day is applied by applyView(); the default here mirrors the
@@ -64,6 +67,14 @@
              session and a configured project — otherwise it stays hidden and
              the header looks exactly as it always did. -->
         <span id="sync-pill" class="sync-pill hidden" role="status" aria-live="polite"></span>
+        <!-- Reminders. Revealed by app.js only where notifications are actually
+             available — a secure origin with a service worker — so on file:// it
+             stays hidden and the header looks exactly as it always did. The
+             permission request has to come from a click on this button, never
+             from load. -->
+        <button id="reminders-btn" class="ctrl-btn hidden" type="button" title="Reminders">
+          <span>🔔 Enable reminders</span>
+        </button>
       </div>
     </header>
 
@@ -246,6 +257,15 @@
   <div class="update-bar hidden" id="update-bar" role="status" aria-live="polite">
     <span class="update-bar-text">A new version is ready.</span>
     <button class="update-bar-btn" id="update-bar-btn" type="button">Reload</button>
+  </div>
+
+  <!-- Delete undo. A task carries its subtasks, its observation notes and its
+       tracked time, and one click on ✕ discarded all of it. The delete itself is
+       still immediate — only the removed object is held, briefly, in case it was
+       a misclick. Shares the update bar's geometry; see style.css. -->
+  <div class="update-bar undo-bar hidden" id="undo-bar" role="status" aria-live="polite">
+    <span class="update-bar-text" id="undo-bar-text">Task deleted.</span>
+    <button class="update-bar-btn" id="undo-bar-btn" type="button">Undo</button>
   </div>
 
   <!-- Sign-in gate. Hidden by default and revealed by auth.js only once it has
