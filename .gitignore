@@ -5,12 +5,14 @@ node_modules/
 # Vercel's local project link, created by `vercel link`.
 .vercel/
 
-# Phase 2: real Supabase credentials. config.example.js is the committed
-# template; config.js holds the project URL and anon key and stays local.
-# (The anon key is safe to ship — RLS is the enforcement boundary — but keeping
-# it out of the repo means a fork cannot silently point at your project. The
-# service_role key must never appear here in any form.)
-config.js
+# config.js is NOT ignored, deliberately. It holds the project URL and the
+# anon key, both publishable — and Vercel deploys from this repo, so ignoring it
+# would mean the deployed site 404s on the script and can never sign in.
+# See the comment at the top of config.js.
+#
+# What must never be committed, in any file: a `sb_secret_...` key or an older
+# `service_role` JWT. Those ignore every RLS policy and amount to full database
+# access for anyone who reads them.
 
 # OS noise
 .DS_Store

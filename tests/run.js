@@ -12,6 +12,7 @@ const SUITES = [
   ['css-check.js', 'stylesheet structure'],
   ['contrast.js', 'colour contrast, all four palettes'],
   ['pwa-check.js', 'PWA shell and deploy config'],
+  ['secrets-check.js', 'no credential can reach the repo'],
 ];
 
 let failed = [];

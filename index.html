@@ -53,6 +53,13 @@
         <button id="theme-toggle-btn" class="ctrl-btn theme-toggle-btn" title="Toggle Dark / Light Theme">
           <span id="theme-icon">🌙 Dark</span>
         </button>
+        <!-- Filled in and revealed by auth.js once a session exists. Not part of
+             the app: with no account configured it stays hidden and the header
+             looks exactly as it always did. -->
+        <span id="auth-who" class="auth-who hidden"></span>
+        <button id="sign-out-btn" class="ctrl-btn hidden" title="Sign out of this device">
+          <span>Sign out</span>
+        </button>
       </div>
     </header>
 
@@ -237,6 +244,40 @@
     <button class="update-bar-btn" id="update-bar-btn" type="button">Reload</button>
   </div>
 
+  <!-- Sign-in gate. Hidden by default and revealed by auth.js only once it has
+       decided one is needed, so an unconfigured or offline copy of the app looks
+       exactly as it always did. It sits outside .app-window, which becomes inert
+       while the gate is up. -->
+  <div class="auth-gate hidden" id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+    <div class="auth-card">
+      <h1 class="auth-title" id="auth-title">Task Manager</h1>
+      <p class="auth-sub">Sign in to sync your tasks across your devices.</p>
+      <form class="auth-form" id="auth-form" novalidate>
+        <label class="auth-label" for="auth-email">Email</label>
+        <input class="auth-input" type="email" id="auth-email" name="email"
+               autocomplete="email" inputmode="email" required
+               placeholder="you@example.com" />
+        <div class="auth-code-row hidden" id="auth-code-row">
+          <label class="auth-label" for="auth-code">Six-digit code from the email</label>
+          <input class="auth-input" type="text" id="auth-code" name="code"
+                 autocomplete="one-time-code" inputmode="numeric" maxlength="8"
+                 placeholder="123456" />
+        </div>
+        <button class="auth-btn" type="submit" id="auth-submit">Send sign-in link</button>
+      </form>
+      <p class="auth-note" id="auth-note" role="status" aria-live="polite"></p>
+      <button class="auth-skip" type="button" id="auth-skip">Continue without an account</button>
+    </div>
+  </div>
+
+  <!-- Order matters. config.js carries the project URL and the publishable anon
+       key; vendor/supabase.js is the auth library, committed rather than pulled
+       from a CDN so nothing third-party runs with access to this page; app.js is
+       the app itself and boots without knowing any of this exists; auth.js runs
+       last and only then decides whether a gate is needed. -->
+  <script src="config.js"></script>
+  <script src="vendor/supabase.js"></script>
   <script src="app.js"></script>
+  <script src="auth.js"></script>
 </body>
 </html>

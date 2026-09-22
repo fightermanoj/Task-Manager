@@ -1910,3 +1910,155 @@ body.view-day .main-layout {
     padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
   }
 }
+
+/* =========================================================
+   SIGN-IN GATE
+   =========================================================
+   Styled from the same tokens as everything else, so it follows whichever of
+   the four palettes is active rather than pinning its own colours. It is the
+   first thing anyone sees on a new device, and a screen that ignored the
+   terminal/modern and light/dark switches would look like a different app.
+   ------------------------------------------------------------------------- */
+
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 2000; /* above the update bar, which is 1100 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  padding-bottom: max(var(--space-5), env(safe-area-inset-bottom));
+  background: var(--bg-page);
+  overflow-y: auto;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--bg-card);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.auth-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  color: var(--text-main);
+}
+
+.auth-sub {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.auth-code-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.auth-label {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.auth-input {
+  font-family: inherit;
+  /* 16px, not a token: anything smaller makes iOS Safari zoom the whole page
+     in when the field is focused, and this is the first field anyone touches
+     on a phone. */
+  font-size: 16px;
+  min-height: var(--control-h-touch);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-main);
+  background: var(--bg-page);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-sm);
+}
+
+.auth-input:focus-visible {
+  outline: var(--focus-ring-w) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-color: var(--accent-blue);
+}
+
+.auth-btn {
+  font-family: inherit;
+  font-size: var(--text-base);
+  font-weight: 600;
+  min-height: var(--control-h-touch);
+  padding: var(--space-2) var(--space-4);
+  color: var(--on-fill);
+  background: var(--fill-blue);
+  border: 1px solid var(--fill-blue);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.auth-btn:hover:not(:disabled) {
+  background: var(--fill-blue-hover);
+  border-color: var(--fill-blue-hover);
+}
+
+.auth-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Fixed height so the card does not jump as messages come and go. */
+.auth-note {
+  margin: 0;
+  min-height: 1.25em;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.auth-note-error { color: var(--accent-red); }
+.auth-note-ok { color: var(--accent-green); }
+
+/* Deliberately quiet: this is the way out for someone who does not want an
+   account at all, and the app is fully usable without one. */
+.auth-skip {
+  font-family: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  padding: var(--space-2);
+  min-height: var(--control-h);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.auth-skip:hover { color: var(--text-main); }
+
+/* The signed-in email in the header. */
+.auth-who {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  align-self: center;
+}
+
+@media (max-width: 760px) {
+  .auth-who { display: none; }
+}
