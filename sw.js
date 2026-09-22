@@ -15,7 +15,7 @@
 //     offline costs nothing. Calling respondWith() there would turn a harmless
 //     font miss into a thrown error.
 
-const VERSION = 'tm-v1';
+const VERSION = 'tm-v2';
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -24,10 +24,16 @@ const RUNTIME_CACHE = `${VERSION}-runtime`;
 // which is what a deep link or an offline reload actually requests.
 const APP_SHELL = './index.html';
 
+// Everything the app cannot start without. auth.js and sync.js belong here and
+// not only in the runtime cache: a file that is merely fetched-once is missing
+// on the very first offline load, which is exactly when someone opens an
+// installed app on a plane.
 const CORE = [
   APP_SHELL,
   './style.css',
   './app.js',
+  './auth.js',
+  './sync.js',
   './manifest.json',
 ];
 
@@ -39,6 +45,11 @@ const STATIC_EXTENSIONS = /\.(?:css|js|mjs|json|png|jpg|jpeg|gif|svg|webp|avif|i
 // Best-effort: a missing icon must not fail the whole install and leave the app
 // with no worker at all.
 const OPTIONAL = [
+  // config.js is deploy-time configuration and vendor/supabase.js is the
+  // largest file here by far. Both are optional for the same reason: a missing
+  // one must cost the app nothing worse than no sign-in, never a failed install.
+  './config.js',
+  './vendor/supabase.js',
   './icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',

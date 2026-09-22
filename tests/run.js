@@ -13,6 +13,7 @@ const SUITES = [
   ['contrast.js', 'colour contrast, all four palettes'],
   ['pwa-check.js', 'PWA shell and deploy config'],
   ['secrets-check.js', 'no credential can reach the repo'],
+  ['sync-check.js', 'sync merge rules against a stub server'],
 ];
 
 let failed = [];

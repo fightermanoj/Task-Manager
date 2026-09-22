@@ -275,6 +275,13 @@ if (groups.length === 0) groups = [...DEFAULT_GROUPS];
 // still in storage and no way to reach it. `{}` is exactly what an empty or
 // errored sync response looks like, so this is the shape Phase 3 is most likely
 // to hand us.
+// Set by a later script to observe every persist. Deliberately generic — this
+// file must keep working with no account, offline, and from file://, so it
+// knows nothing about what the observer does or whether one exists at all.
+// Declared above the boot migration below, which is the first thing that can
+// call saveToStorage().
+let persistObserver = null;
+
 const storedTasks = loadJson('tm_tasks', []);
 let tasks = (Array.isArray(storedTasks) ? storedTasks : []).map(normalizeTask);
 
@@ -514,8 +521,19 @@ if (dayViewPicker) dayViewPicker.value = currentViewDate;
 
 // Save State
 function saveToStorage() {
-  localStorage.setItem('tm_groups', JSON.stringify(groups));
-  localStorage.setItem('tm_tasks', JSON.stringify(tasks));
+  try {
+    localStorage.setItem('tm_groups', JSON.stringify(groups));
+    localStorage.setItem('tm_tasks', JSON.stringify(tasks));
+  } catch (err) {
+    // Quota exhausted, or storage unavailable at all — some private modes and
+    // any site with storage blocked by policy. Losing this write is bad, but
+    // throwing from the middle of a render leaves the app dead and the failure
+    // unexplained; the in-memory state is still correct either way.
+    console.warn('Could not save to storage', err);
+  }
+  // Every mutation passes through here, which makes this the one place a later
+  // script can watch writes without app.js knowing what it does with them.
+  if (typeof persistObserver === 'function') persistObserver();
 }
 
 // Check if a task occurs on a specific date
@@ -1523,6 +1541,9 @@ window.TM = {
   normalizeTask,
   loadJson,
   saveToStorage,
+  // Lets a later script watch every persist. Generic on purpose; see the
+  // declaration of persistObserver.
+  setPersistObserver(fn) { persistObserver = typeof fn === 'function' ? fn : null; },
   renderAll,
   renderDayView,
   renderAnalyticsModal,

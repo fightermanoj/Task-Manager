@@ -120,8 +120,8 @@ check('the gate markup is hidden by default',
 
 console.log('\n[sec-5] Load order and isolation');
 const order = [...html.matchAll(/<script src="([^"]+)"/g)].map(m => m[1]);
-check('scripts load config, library, app, then auth',
-  JSON.stringify(order) === JSON.stringify(['config.js', 'vendor/supabase.js', 'app.js', 'auth.js']),
+check('scripts load config, library, app, auth, then sync',
+  JSON.stringify(order) === JSON.stringify(['config.js', 'vendor/supabase.js', 'app.js', 'auth.js', 'sync.js']),
   order.join(' -> '));
 check('the auth library is committed, not pulled from a CDN',
   tracked.includes('vendor/supabase.js'),
@@ -161,6 +161,72 @@ check('navigations are not cached under their real URL',
   'a magic-link URL carrying a token would be written into Cache Storage');
 check('the runtime cache takes static files only',
   /STATIC_EXTENSIONS/.test(sw));
+// Fetched-once is not the same as precached: a file that only ever lands in the
+// runtime cache is missing the first time the app is opened with no network,
+// which is exactly when an installed app gets opened.
+check('the shell precaches the scripts it cannot start without',
+  /'\.\/auth\.js'/.test(sw) && /'\.\/sync\.js'/.test(sw),
+  'a first offline load would start with no sign-in and no sync');
+
+console.log('\n[sec-7] Remember me cannot quietly remember you');
+// The failure that matters is unchecking the box and being signed in anyway on
+// the next visit, because a copy of the session was left where it would be
+// found. Everything here is about the session existing in exactly one place.
+check('the control exists and defaults to remembered',
+  /id="auth-remember"/.test(html) && /id="auth-remember"[\s\S]{0,40}checked/.test(html));
+check('the session is stored under a key we control',
+  /storageKey:\s*SESSION_KEY/.test(auth),
+  'the library would choose its own name and we could not move it reliably');
+check('every key sharing that prefix moves together',
+  /function sessionKeys/.test(auth) && /indexOf\(SESSION_KEY\) === 0/.test(auth),
+  'the PKCE code verifier shares the prefix and would be stranded');
+check('the session is taken out of the other store, not just copied',
+  /function settleSessionStore/.test(auth) && /drop\.removeItem\(key\)/.test(auth));
+check('and every write clears the other store',
+  /storeFor\(!wantsRemember\(\)\)\.removeItem\(key\)/.test(auth));
+check('no stored preference means remembered, as before this existed',
+  /!== '0'/.test(auth));
+check('the password itself is never persisted',
+  !/setItem\([^,]*,[^)]*password/i.test(auth),
+  'a password in localStorage is readable by any script on this origin');
+
+console.log('\n[sec-8] Sync cannot break the app or lose a local edit');
+const sync = contents.get('sync.js') || '';
+check('sync.js is shipped', sync.length > 0);
+check('it is inert without a config, a client or a real origin',
+  /if \(!cfg \|\| !cfg\.url \|\| !client \|\| !TM/.test(sync));
+check('app.js still cannot reach the account layer',
+  !/TM_AUTH|supabase/i.test(contents.get('app.js') || ''),
+  'app.js must keep working with no account, offline, and from file://');
+check('the observer app.js exposes stays generic',
+  /setPersistObserver/.test(contents.get('app.js') || ''));
+check('deletes are tombstones, never hard deletes',
+  /deleted_at/.test(sync) && !/\.delete\(\)/.test(sync),
+  'a hard delete cannot be propagated — the other device re-uploads the row');
+check('an unpushed local edit outranks the server copy',
+  /pending\.has\(id\)/.test(sync));
+check('the client supplies updated_at',
+  /updated_at:\s*stamp/.test(sync));
+check('the pull keeps tombstones',
+  /select\('\*'\)/.test(sync),
+  'filtering deleted rows out means a delete can never be learned about');
+
+console.log('\n[sec-9] The schema cannot invert last-write-wins');
+const schema = contents.get('sql/schema.sql') || '';
+check('no updated_at trigger on tasks', !/tasks_set_updated_at/.test(schema),
+  'it records arrival time, so the oldest offline edit wins every conflict');
+check('none on task_groups either', !/task_groups_set_updated_at/.test(schema));
+check('profiles keeps its trigger', /profiles_set_updated_at/.test(schema));
+check('the group index is not partial',
+  /unique index if not exists task_groups_user_name_key[\s\S]{0,90}\(user_id, name\);/.test(schema),
+  'PostgREST cannot name a partial index as an upsert target');
+const migration = contents.get('sql/phase3.sql') || '';
+check('the migration drops both triggers for an existing project',
+  /drop trigger if exists tasks_set_updated_at/.test(migration) &&
+  /drop trigger if exists task_groups_set_updated_at/.test(migration),
+  'schema.sql alone cannot undo a trigger it no longer declares');
+check('and rebuilds the index',
+  /create unique index if not exists task_groups_user_name_key/.test(migration));
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

@@ -2119,6 +2119,55 @@ body.view-day .main-layout {
   align-self: center;
 }
 
+/* Remember me. Lighter than the fields above it and the button below it,
+   because it is a preference rather than a step in signing in. */
+.auth-remember {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h-touch);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.auth-remember input {
+  /* The native control, sized up to a comfortable target rather than replaced:
+     a checkbox drawn out of divs loses the keyboard and accessibility
+     behaviour the browser already gets right. */
+  width: 1.15em;
+  height: 1.15em;
+  margin: 0;
+  flex: none;
+  accent-color: var(--fill-blue);
+  cursor: pointer;
+}
+
+.auth-remember input:focus-visible {
+  outline: var(--focus-ring-w) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Sync state in the header. Text stays on a token the contrast check already
+   covers in all four palettes, and the words themselves carry the meaning —
+   colour alone would be the only signal otherwise, which is no signal at all
+   for the one in twelve men who would not see the difference. */
+.sync-pill {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-sm);
+  align-self: center;
+  white-space: nowrap;
+}
+
+.sync-pill.is-error { border-color: var(--accent-red); }
+
 @media (max-width: 760px) {
   .auth-who { display: none; }
+  /* The pill is the only place a sync failure is reported, so it stays; it is
+     the email address beside it, which the header already shows nowhere else,
+     that gives up the room. */
+  .sync-pill { padding: var(--space-1); }
 }

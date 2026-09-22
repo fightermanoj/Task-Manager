@@ -16,7 +16,16 @@
                  case: type it where you already are instead of following the
                  link somewhere else.
 
-   Two things this deliberately does NOT do:
+   "Remember me" chooses where the session is kept: localStorage, which outlives
+   the browser closing, or sessionStorage, which does not. It defaults to the
+   former, because that is what the app did before the control existed — a
+   device that never touches it must keep behaving exactly as it did.
+
+   Three things this deliberately does NOT do:
+
+     * It does not store your password. Browsers offer to do that themselves,
+       and a password sitting in localStorage is readable by any script that
+       ever ends up on this origin.
 
      * It does not run when the page is opened off disk. index.html opened
        directly has no origin to redirect a sign-in link back to and no server
@@ -50,6 +59,7 @@
   const skipBtn = document.getElementById('auth-skip');
   const signOutBtn = document.getElementById('sign-out-btn');
   const who = document.getElementById('auth-who');
+  const rememberInput = document.getElementById('auth-remember');
 
   // The gate covers the app visually; `inert` takes it out of the tab order and
   // the accessibility tree as well, so the sign-in form is the only thing
@@ -74,10 +84,129 @@
     return;
   }
 
-  const client = supabase.createClient(cfg.url, cfg.anonKey);
+  // --- Remember me ----------------------------------------------------------
+  //
+  // Where the session is kept. Checked — the default, and exactly what the app
+  // did before this control existed — means localStorage, which survives the
+  // browser closing. Unchecked means sessionStorage, which the browser drops
+  // when it closes, so the device forgets you.
+  //
+  // The key is ours rather than one supabase-js generates, for a specific
+  // reason: the session then lives under a name we know, in exactly one of two
+  // stores, and can be moved between them without guessing at the library's
+  // internal key shape.
+  const REMEMBER_KEY = 'tm_remember';
+  const SESSION_KEY = 'tm_auth_session';
+  const EMAIL_KEY = 'tm_last_email';
+
+  // Absent means remembered. A device that has never touched the checkbox has
+  // no stored preference, and the behaviour it had before this existed is the
+  // one it should keep.
+  function wantsRemember() {
+    try { return localStorage.getItem(REMEMBER_KEY) !== '0'; } catch (err) { return true; }
+  }
+
+  function storeFor(remember) {
+    return remember ? localStorage : sessionStorage;
+  }
+
+  // supabase-js keeps a PKCE code verifier alongside the session, under a key
+  // sharing this prefix. Moving only the session would strand it, so every key
+  // with the prefix moves together.
+  function sessionKeys() {
+    const keys = [];
+    const collect = (store) => {
+      try {
+        for (let i = 0; i < store.length; i++) {
+          const key = store.key(i);
+          if (key && key.indexOf(SESSION_KEY) === 0 && keys.indexOf(key) === -1) keys.push(key);
+        }
+      } catch (err) { /* storage blocked */ }
+    };
+    collect(localStorage);
+    collect(sessionStorage);
+    return keys;
+  }
+
+  // The session must live in exactly one of the two stores. A copy left behind
+  // in localStorage is precisely the bug that would make "don't remember me"
+  // silently remember you: the next visit reads it straight back and the
+  // checkbox appears to have done nothing.
+  function settleSessionStore() {
+    const keep = storeFor(wantsRemember());
+    const drop = storeFor(!wantsRemember());
+    try {
+      sessionKeys().forEach(key => {
+        const value = drop.getItem(key);
+        if (value !== null) keep.setItem(key, value);
+        drop.removeItem(key);
+      });
+    } catch (err) { /* storage blocked */ }
+  }
+
+  // supabase-js reads and writes the session through this, so the invariant
+  // holds on every save and not only when the checkbox is toggled.
+  const rememberAwareStorage = {
+    getItem(key) {
+      try { return storeFor(wantsRemember()).getItem(key); } catch (err) { return null; }
+    },
+    setItem(key, value) {
+      try {
+        storeFor(wantsRemember()).setItem(key, value);
+        storeFor(!wantsRemember()).removeItem(key);
+      } catch (err) { /* storage blocked */ }
+    },
+    removeItem(key) {
+      try { localStorage.removeItem(key); } catch (err) { /* storage blocked */ }
+      try { sessionStorage.removeItem(key); } catch (err) { /* storage blocked */ }
+    }
+  };
+
+  function rememberEmail(email) {
+    try {
+      if (wantsRemember() && email) localStorage.setItem(EMAIL_KEY, email);
+      else localStorage.removeItem(EMAIL_KEY);
+    } catch (err) { /* storage blocked */ }
+  }
+
+  function recalledEmail() {
+    try { return wantsRemember() ? (localStorage.getItem(EMAIL_KEY) || '') : ''; }
+    catch (err) { return ''; }
+  }
+
+  // Settle before the client is built and reads the session, so a choice made
+  // on a previous visit is already in force.
+  settleSessionStore();
+
+  const client = supabase.createClient(cfg.url, cfg.anonKey, {
+    auth: {
+      storageKey: SESSION_KEY,
+      storage: rememberAwareStorage,
+      persistSession: true,
+      autoRefreshToken: true
+    }
+  });
   // Kept on the bridge so the Phase 3 sync layer can reuse this exact client
   // rather than opening a second one with its own token refresh cycle.
   window.TM_AUTH = client;
+
+  // Flipping the checkbox takes effect immediately, including for a session
+  // that already exists — it is moved between stores rather than waiting for
+  // the next sign-in to matter.
+  if (rememberInput) {
+    rememberInput.checked = wantsRemember();
+    rememberInput.addEventListener('change', () => {
+      try {
+        localStorage.setItem(REMEMBER_KEY, rememberInput.checked ? '1' : '0');
+      } catch (err) { /* storage blocked */ }
+      settleSessionStore();
+      rememberEmail(rememberInput.checked ? (emailInput && emailInput.value || '').trim() : '');
+    });
+  }
+
+  // Prefilled only when the address was deliberately remembered.
+  const recalled = recalledEmail();
+  if (recalled && emailInput && !emailInput.value) emailInput.value = recalled;
 
   const show = (message, kind) => {
     if (!note) return;
@@ -158,6 +287,7 @@
         }).then(({ error }) => {
           if (submitBtn) submitBtn.disabled = false;
           if (error) { show(error.message, 'error'); return; }
+          rememberEmail(email);
           if (codeRow) codeRow.classList.remove('hidden');
           show('Check your email — tap the link, or type the code below.', 'ok');
         }).catch(() => {
@@ -189,6 +319,7 @@
               : error.message, 'error');
             return;
           }
+          rememberEmail(email);
           show('');
         })
         .catch(() => {
@@ -214,6 +345,7 @@
         .then(({ data, error }) => {
           createBtn.disabled = false;
           if (error) { show(error.message, 'error'); return; }
+          rememberEmail(email);
           // A session means we are already in. No session means the project is
           // still set to require email confirmation before first sign-in.
           if (data && data.session) { show(''); return; }

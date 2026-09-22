@@ -60,6 +60,10 @@
         <button id="sign-out-btn" class="ctrl-btn hidden" title="Sign out of this device">
           <span>Sign out</span>
         </button>
+        <!-- Sync state. Filled in by sync.js, which only ever runs with a
+             session and a configured project — otherwise it stays hidden and
+             the header looks exactly as it always did. -->
+        <span id="sync-pill" class="sync-pill hidden" role="status" aria-live="polite"></span>
       </div>
     </header>
 
@@ -275,6 +279,14 @@
                  autocomplete="one-time-code" inputmode="numeric" maxlength="8"
                  placeholder="123456" />
         </div>
+        <!-- Where the session is kept. Checked is what the app did before this
+             control existed, so a device that never touches it behaves exactly
+             as it always did. Unchecked keeps the session only until the browser
+             closes — the right choice on a shared machine. -->
+        <label class="auth-remember" for="auth-remember">
+          <input type="checkbox" id="auth-remember" checked />
+          <span>Keep me signed in on this device</span>
+        </label>
         <button class="auth-btn" type="submit" id="auth-submit">Sign in</button>
         <button class="auth-alt-btn" type="button" id="auth-create">Create an account</button>
       </form>
@@ -286,11 +298,14 @@
   <!-- Order matters. config.js carries the project URL and the publishable anon
        key; vendor/supabase.js is the auth library, committed rather than pulled
        from a CDN so nothing third-party runs with access to this page; app.js is
-       the app itself and boots without knowing any of this exists; auth.js runs
-       last and only then decides whether a gate is needed. -->
+       the app itself and boots without knowing any of this exists; auth.js then
+       decides whether a gate is needed; sync.js runs last and does nothing at
+       all unless auth.js produced a session, so it can never be the reason the
+       app fails to start. -->
   <script src="config.js"></script>
   <script src="vendor/supabase.js"></script>
   <script src="app.js"></script>
   <script src="auth.js"></script>
+  <script src="sync.js"></script>
 </body>
 </html>

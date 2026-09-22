@@ -8,7 +8,9 @@
 -- consequences shape everything below:
 --
 --   * Last-write-wins needs `updated_at` on every row, or two devices cannot be
---     reconciled and the last write wins regardless of when it happened.
+--     reconciled and the last write wins regardless of when it happened. It is
+--     the *client* that writes that column, not the database — see the section
+--     before Row Level Security for why the trigger has to be absent.
 --
 --   * Deletes need to be tombstones (`deleted_at`), not real deletes. A row that
 --     is simply gone cannot be propagated — the other device still has it, sees
@@ -74,9 +76,16 @@ create table if not exists public.task_groups (
   deleted_at timestamptz
 );
 
+-- Not a partial index, deliberately. PostgREST expresses an upsert as
+-- `on conflict (user_id, name)`, and Postgres can only infer a *partial* index
+-- when the statement repeats its WHERE clause — which PostgREST cannot emit. A
+-- partial index here fails at runtime with "no unique or exclusion constraint
+-- matching the ON CONFLICT specification", and the group sync silently never
+-- works. The cost of the full index is that a soft-deleted group name cannot be
+-- reused while its tombstone exists; the client pushes deleted_at = null on
+-- conflict, which un-deletes rather than colliding.
 create unique index if not exists task_groups_user_name_key
-  on public.task_groups (user_id, name)
-  where deleted_at is null;
+  on public.task_groups (user_id, name);
 
 create index if not exists task_groups_user_idx
   on public.task_groups (user_id);
@@ -130,8 +139,23 @@ create index if not exists tasks_user_updated_idx
 
 
 -- =========================================================
--- updated_at — maintained by the database, not the client
+-- updated_at — supplied by the client on the two synced tables
 -- =========================================================
+--
+-- Deliberately NO trigger on tasks or task_groups. A `before update` trigger
+-- writing `now()` records when the row *arrived*, not when the edit was made,
+-- and last-write-wins compares exactly those two things. With the trigger in
+-- place, a phone that was offline all week pushes on Friday and takes its
+-- seven-day-old edit over a newer one made on the desktop on Thursday — the
+-- conflict resolves backwards, which is worse than not resolving it at all.
+--
+-- So the client stamps updated_at from its own clock. The cost is that a device
+-- with a badly wrong clock can win a conflict it should lose; for a single-user
+-- app that is the better trade.
+--
+-- profiles has no such conflict — nothing is edited on two devices offline — so
+-- the database maintains its timestamp, which is one less thing to trust a
+-- client for.
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -143,16 +167,6 @@ begin
   return new;
 end;
 $$;
-
-drop trigger if exists tasks_set_updated_at on public.tasks;
-create trigger tasks_set_updated_at
-  before update on public.tasks
-  for each row execute function public.set_updated_at();
-
-drop trigger if exists task_groups_set_updated_at on public.task_groups;
-create trigger task_groups_set_updated_at
-  before update on public.task_groups
-  for each row execute function public.set_updated_at();
 
 drop trigger if exists profiles_set_updated_at on public.profiles;
 create trigger profiles_set_updated_at
