@@ -1964,10 +1964,70 @@ body.view-day .main-layout {
   gap: var(--space-3);
 }
 
-.auth-code-row {
+.auth-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--bg-page);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-sm);
+}
+
+.auth-tab {
+  flex: 1;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  min-height: var(--control-h);
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+
+/* The active tab is a raised surface rather than a colour, so it reads the same
+   way in all four palettes and does not compete with the primary button. */
+.auth-tab.is-active {
+  color: var(--text-main);
+  background: var(--bg-card);
+  border: 1px solid var(--border-main);
+  font-weight: 600;
+}
+
+.auth-tab:focus-visible {
+  outline: var(--focus-ring-w) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.auth-field-row {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+/* Secondary to the primary button on purpose: signing in and creating an
+   account are the same weight of action, but only one of them is what someone
+   returning to the app wants. */
+.auth-alt-btn {
+  font-family: inherit;
+  font-size: var(--text-sm);
+  min-height: var(--control-h-touch);
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-main);
+  background: none;
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.auth-alt-btn:hover:not(:disabled) { border-color: var(--accent-blue); }
+.auth-alt-btn:disabled { opacity: 0.6; cursor: default; }
+
+.auth-alt-btn:focus-visible {
+  outline: var(--focus-ring-w) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .auth-label {

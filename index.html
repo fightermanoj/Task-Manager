@@ -252,18 +252,31 @@
     <div class="auth-card">
       <h1 class="auth-title" id="auth-title">Task Manager</h1>
       <p class="auth-sub">Sign in to sync your tasks across your devices.</p>
+      <div class="auth-tabs" role="tablist" aria-label="Sign-in method">
+        <button class="auth-tab is-active" type="button" role="tab" aria-selected="true"
+                id="auth-tab-password" aria-controls="auth-form">Password</button>
+        <button class="auth-tab" type="button" role="tab" aria-selected="false"
+                id="auth-tab-link" aria-controls="auth-form">Email link</button>
+      </div>
       <form class="auth-form" id="auth-form" novalidate>
         <label class="auth-label" for="auth-email">Email</label>
         <input class="auth-input" type="email" id="auth-email" name="email"
                autocomplete="email" inputmode="email" required
                placeholder="you@example.com" />
-        <div class="auth-code-row hidden" id="auth-code-row">
+        <div class="auth-field-row" id="auth-password-row">
+          <label class="auth-label" for="auth-password">Password</label>
+          <input class="auth-input" type="password" id="auth-password" name="password"
+                 autocomplete="current-password" minlength="6"
+                 placeholder="At least 6 characters" />
+        </div>
+        <div class="auth-field-row hidden" id="auth-code-row">
           <label class="auth-label" for="auth-code">Six-digit code from the email</label>
           <input class="auth-input" type="text" id="auth-code" name="code"
                  autocomplete="one-time-code" inputmode="numeric" maxlength="8"
                  placeholder="123456" />
         </div>
-        <button class="auth-btn" type="submit" id="auth-submit">Send sign-in link</button>
+        <button class="auth-btn" type="submit" id="auth-submit">Sign in</button>
+        <button class="auth-alt-btn" type="button" id="auth-create">Create an account</button>
       </form>
       <p class="auth-note" id="auth-note" role="status" aria-live="polite"></p>
       <button class="auth-skip" type="button" id="auth-skip">Continue without an account</button>

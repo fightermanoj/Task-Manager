@@ -4,6 +4,18 @@
    knows nothing about any of this — it boots identically whether or not there is
    an account, because localStorage is still what it reads and writes.
 
+   Two ways in, and they are not redundant:
+
+     Password  — no email is sent, so nothing can be rate-limited, delayed or
+                 filtered into a spam folder. This is the reliable one.
+
+     Email link — nothing to remember or type. Better on a phone in principle,
+                 but on an installed iPhone app the link opens in Safari rather
+                 than in the app, so the session lands in Safari and the app you
+                 installed stays signed out. The six-digit code exists for that
+                 case: type it where you already are instead of following the
+                 link somewhere else.
+
    Two things this deliberately does NOT do:
 
      * It does not run when the page is opened off disk. index.html opened
@@ -23,17 +35,21 @@
   const cfg = window.TM_CONFIG;
 
   const gate = document.getElementById('auth-gate');
+  const appWindow = document.getElementById('app-window');
   const form = document.getElementById('auth-form');
   const emailInput = document.getElementById('auth-email');
+  const passwordInput = document.getElementById('auth-password');
+  const passwordRow = document.getElementById('auth-password-row');
   const codeInput = document.getElementById('auth-code');
   const codeRow = document.getElementById('auth-code-row');
   const submitBtn = document.getElementById('auth-submit');
+  const createBtn = document.getElementById('auth-create');
+  const tabPassword = document.getElementById('auth-tab-password');
+  const tabLink = document.getElementById('auth-tab-link');
   const note = document.getElementById('auth-note');
   const skipBtn = document.getElementById('auth-skip');
   const signOutBtn = document.getElementById('sign-out-btn');
   const who = document.getElementById('auth-who');
-
-  const appWindow = document.getElementById('app-window');
 
   // The gate covers the app visually; `inert` takes it out of the tab order and
   // the accessibility tree as well, so the sign-in form is the only thing
@@ -73,6 +89,23 @@
   // link that lands on a URL still carrying an old token would be re-consumed.
   const returnTo = () => location.href.split('#')[0].split('?')[0];
 
+  const setMode = (next) => {
+    const link = next === 'link';
+    if (passwordRow) passwordRow.classList.toggle('hidden', link);
+    if (createBtn) createBtn.classList.toggle('hidden', link);
+    if (tabPassword) {
+      tabPassword.classList.toggle('is-active', !link);
+      tabPassword.setAttribute('aria-selected', String(!link));
+    }
+    if (tabLink) {
+      tabLink.classList.toggle('is-active', link);
+      tabLink.setAttribute('aria-selected', String(link));
+    }
+    if (submitBtn) submitBtn.textContent = link ? 'Send sign-in link' : 'Sign in';
+    if (passwordInput) passwordInput.value = '';
+    show('');
+  };
+
   function showGate() {
     if (gate) gate.classList.remove('hidden');
     if (appWindow) {
@@ -106,31 +139,90 @@
     showGate();
   }
 
+  if (tabPassword) tabPassword.addEventListener('click', () => setMode('password'));
+  if (tabLink) tabLink.addEventListener('click', () => setMode('link'));
+
   if (form) {
     form.addEventListener('submit', event => {
       event.preventDefault();
       const email = (emailInput && emailInput.value || '').trim();
       if (!email) return;
+      const usingLink = tabLink && tabLink.classList.contains('is-active');
+
+      if (usingLink) {
+        if (submitBtn) submitBtn.disabled = true;
+        show('Sending…');
+        client.auth.signInWithOtp({
+          email,
+          options: { emailRedirectTo: returnTo(), shouldCreateUser: true }
+        }).then(({ error }) => {
+          if (submitBtn) submitBtn.disabled = false;
+          if (error) { show(error.message, 'error'); return; }
+          if (codeRow) codeRow.classList.remove('hidden');
+          show('Check your email — tap the link, or type the code below.', 'ok');
+        }).catch(() => {
+          if (submitBtn) submitBtn.disabled = false;
+          show('Could not reach the server. Check your connection.', 'error');
+        });
+        return;
+      }
+
+      const password = (passwordInput && passwordInput.value) || '';
+      // Checked here as well as in the markup so the message is ours rather
+      // than the browser's, and so the same rule covers the create path.
+      if (password.length < 6) {
+        show('Password must be at least 6 characters.', 'error');
+        if (passwordInput) passwordInput.focus();
+        return;
+      }
 
       if (submitBtn) submitBtn.disabled = true;
-      show('Sending…');
+      show('Signing in…');
+      client.auth.signInWithPassword({ email, password })
+        .then(({ error }) => {
+          if (submitBtn) submitBtn.disabled = false;
+          if (error) {
+            // The single most likely error by far, and Supabase's own wording
+            // ("Invalid login credentials") does not say what to do about it.
+            show(/invalid login/i.test(error.message)
+              ? 'Wrong email or password. If you have not made an account yet, use Create an account below.'
+              : error.message, 'error');
+            return;
+          }
+          show('');
+        })
+        .catch(() => {
+          if (submitBtn) submitBtn.disabled = false;
+          show('Could not reach the server. Check your connection.', 'error');
+        });
+    });
+  }
 
-      client.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: returnTo(), shouldCreateUser: true }
-      }).then(({ error }) => {
-        if (submitBtn) submitBtn.disabled = false;
-        if (error) { show(error.message, 'error'); return; }
-        // The code field is revealed alongside the link because the two are not
-        // interchangeable: on an installed iPhone app a link opens in Safari,
-        // which means the session lands in Safari and the app you installed
-        // stays signed out. Typing the code keeps you where you already are.
-        if (codeRow) codeRow.classList.remove('hidden');
-        show('Check your email — tap the link, or type the code below.', 'ok');
-      }).catch(() => {
-        if (submitBtn) submitBtn.disabled = false;
-        show('Could not reach the server. Check your connection.', 'error');
-      });
+  if (createBtn) {
+    createBtn.addEventListener('click', () => {
+      const email = (emailInput && emailInput.value || '').trim();
+      const password = (passwordInput && passwordInput.value) || '';
+      if (!email) { show('Enter your email first.', 'error'); if (emailInput) emailInput.focus(); return; }
+      if (password.length < 6) {
+        show('Password must be at least 6 characters.', 'error');
+        if (passwordInput) passwordInput.focus();
+        return;
+      }
+      createBtn.disabled = true;
+      show('Creating your account…');
+      client.auth.signUp({ email, password, options: { emailRedirectTo: returnTo() } })
+        .then(({ data, error }) => {
+          createBtn.disabled = false;
+          if (error) { show(error.message, 'error'); return; }
+          // A session means we are already in. No session means the project is
+          // still set to require email confirmation before first sign-in.
+          if (data && data.session) { show(''); return; }
+          show('Account created. Confirm your email, then sign in above.', 'ok');
+        })
+        .catch(() => {
+          createBtn.disabled = false;
+          show('Could not reach the server. Check your connection.', 'error');
+        });
     });
   }
 

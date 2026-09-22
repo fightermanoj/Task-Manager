@@ -137,6 +137,22 @@ check('the client is exposed for the sync phase to reuse',
   /window\.TM_AUTH\s*=/.test(auth),
   'Phase 3 would open a second client with its own token refresh');
 
+console.log('\n[sec-5b] The password path never sends email');
+// Supabase's built-in sender allows about three emails an hour, so a sign-in
+// flow that always sends one can lock the only account out during setup. The
+// password path has to stand on its own.
+check('password sign-in exists', /signInWithPassword\(/.test(auth));
+check('account creation exists', /signUp\(/.test(auth));
+check('the create button is not offered in link mode',
+  /createBtn\)\s*createBtn\.classList\.toggle\('hidden', link\)/.test(auth.replace(/\s+/g, ' ')),
+  'it would offer to create an account that already exists');
+check('both methods are reachable from the markup',
+  /id="auth-tab-password"/.test(html) && /id="auth-tab-link"/.test(html));
+check('the password field is never autocompleted as a new one',
+  /autocomplete="current-password"/.test(html));
+check('a short password is refused before the request',
+  /password\.length < 6/.test(auth));
+
 console.log('\n[sec-6] The service worker must not cache credentials');
 const sw = contents.get('sw.js') || '';
 // A token in a cache key is readable by any later script on the origin.
