@@ -46,10 +46,19 @@
   const FLUSH_DELAY_MS = 2000;
   // Focus fires constantly when switching windows; a pull is a full round trip.
   const MIN_PULL_GAP_MS = 20000;
+  // How often a tab that is actually on screen re-checks the server. Nothing
+  // else covers that case. Startup, regaining focus and coming back online are
+  // the only other triggers, and a window left open on a desk — which is the
+  // normal shape of "I added it on my phone and expected to see it here" —
+  // fires none of them, so it never looked at all. Cheap, because it only runs
+  // while the tab is visible; a hidden tab has its timers throttled by the
+  // browser regardless.
+  const POLL_MS = 15000;
 
   let suppress = false;      // true while writing state that came from the server
   let running = false;
   let flushTimer = null;
+  let pollTimer = null;
   let lastSyncAt = 0;
 
   /* ---------------------------------------------------------------- storage */
@@ -372,7 +381,7 @@
     return data && data.session ? data.session : null;
   }
 
-  async function syncNow(force) {
+  async function syncNow(force, quiet) {
     if (running) return;
     const current = await session();
     if (!current) return;
@@ -381,7 +390,11 @@
     if (!force && Date.now() - lastSyncAt < MIN_PULL_GAP_MS) return;
 
     running = true;
-    setStatus('Syncing…');
+    // A poll fires every few seconds and nearly always finds nothing. Announcing
+    // each one would make the pill blink "Syncing…" then "Synced" all day, which
+    // reads as a fault rather than as health. Quiet runs speak only when the
+    // answer actually changes.
+    if (!quiet) setStatus('Syncing…');
     try {
       // The group push gets its own try, and that isolation is the whole point
       // of this shape. It used to sit unguarded at the top of the cycle, so one
@@ -423,7 +436,7 @@
       // saying so while still flagging the groups is the honest report — the
       // old wording could only say everything worked or nothing did.
       if (groupsFailed) setStatus('Groups not synced', true);
-      else setStatus('Synced');
+      else if (!quiet || currentStatus() !== 'Synced') setStatus('Synced');
     } catch (err) {
       // Never surfaced as a modal or a lost edit. The outbox still holds
       // everything unsent, and the next flush retries.
@@ -453,6 +466,13 @@
     pill.classList.toggle('is-error', !!isError);
   }
 
+  // What the pill currently reads, so a quiet run can leave it alone when the
+  // answer has not moved.
+  function currentStatus() {
+    const pill = document.getElementById('sync-pill');
+    return pill ? pill.textContent : '';
+  }
+
   /* ------------------------------------------------------------------- wiring */
 
   function start() {
@@ -463,11 +483,25 @@
     // time would keep its own copy of anything both sides have. syncNow runs the
     // merge first, which is what tells local-only tasks apart from stale ones.
     syncNow(true);
+
+    // The missing trigger. Everything above is event-driven, so a tab that is
+    // simply open and on screen never looks again — it waits to be switched away
+    // from and back before it notices anything another device did. This is the
+    // only thing that makes "add it on the phone, watch it appear here" work
+    // without touching either device. Guarded, because the test sandbox models a
+    // browser that may not have it, and armed once however often start() is
+    // called.
+    if (typeof setInterval === 'function' && !pollTimer) {
+      pollTimer = setInterval(() => {
+        if (document.visibilityState === 'visible') syncNow(true, true);
+      }, POLL_MS);
+    }
   }
 
   function stop() {
     TM.setPersistObserver(null);
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     setStatus('');
   }
 

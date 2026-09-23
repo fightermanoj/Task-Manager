@@ -68,6 +68,13 @@ function buildEnv(opts) {
   const timers = new Map();
   let timerSeq = 0;
 
+  // Intervals are kept apart from timeouts so that firing the debounce does not
+  // also fire the visible-tab poll, and vice versa. They are different triggers
+  // and a test needs to be able to aim at one of them.
+  const intervals = new Map();
+  let intervalSeq = 0;
+  let visibility = 'visible';
+
   const state = {
     upserts: [],
     upsertError: null,
@@ -151,7 +158,9 @@ function buildEnv(opts) {
     document: {
       getElementById: (id) => (id === 'sync-pill' ? pill : null),
       addEventListener: () => {},
-      visibilityState: 'visible'
+      // Behind an accessor so a test can put the tab in the background, which is
+      // the one condition the poll is supposed to respect.
+      get visibilityState() { return visibility; }
     },
     localStorage,
     sessionStorage,
@@ -159,6 +168,8 @@ function buildEnv(opts) {
     console: { warn: () => {}, log: () => {}, error: () => {} },
     setTimeout: (fn) => { const id = ++timerSeq; timers.set(id, fn); return id; },
     clearTimeout: (id) => { timers.delete(id); },
+    setInterval: (fn, ms) => { const id = ++intervalSeq; intervals.set(id, { fn, ms }); return id; },
+    clearInterval: (id) => { intervals.delete(id); },
     Date: FakeDate
   };
   vm.createContext(sandbox);
@@ -171,7 +182,14 @@ function buildEnv(opts) {
       const fns = [...timers.values()];
       timers.clear();
       fns.forEach(fn => fn());
-    }
+    },
+    // Let 15 seconds elapse on the visible-tab poll, without clearing it — it
+    // is meant to run again.
+    runPoll() {
+      [...intervals.values()].forEach(({ fn }) => fn());
+    },
+    pollMs() { return [...intervals.values()][0]?.ms ?? null; },
+    setVisibility(v) { visibility = v; }
   };
 }
 
@@ -434,6 +452,43 @@ async function main() {
       env.pill.textContent === 'Groups not synced', env.pill.textContent || '(empty)');
     check('and it is still flagged as something being wrong',
       env.pill.classList.contains('is-error'));
+  }
+
+  console.log('\n[sync-12] A tab left open on screen notices another device');
+  {
+    // The gap this closes: every trigger was event-driven — startup, regaining
+    // focus, coming back online — so a window simply sitting on a desk never
+    // looked again. "Add it on the phone, watch it appear here" did nothing at
+    // all until the tab was switched away from and back.
+    const env = buildEnv({ tasks: [task()] });
+    await tick(); await tick();
+    check('the poll is armed', env.pollMs() === 15000, String(env.pollMs()));
+    check('the first sync settled', env.pill.textContent === 'Synced',
+      env.pill.textContent || '(empty)');
+
+    // Another device adds a task. Nothing on this device changed, so not one of
+    // the event-driven triggers will ever fire.
+    env.remote.push(row({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', title: 'Added on the phone' }));
+    FAKE_NOW += 15000;
+    env.runPoll();
+    await tick(); await tick(); await tick();
+
+    check('the poll pulls the other device\'s task',
+      env.TM._tasks.some(t => t.title === 'Added on the phone'),
+      JSON.stringify(env.TM._tasks.map(t => t.title)));
+    check('and the pill does not blink while nothing is wrong',
+      env.pill.textContent === 'Synced', env.pill.textContent || '(empty)');
+
+    // A hidden tab must not poll. The browser throttles its timers anyway, and
+    // the visibilitychange handler catches up on the way back in.
+    env.remote.push(row({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', title: 'While hidden' }));
+    env.setVisibility('hidden');
+    FAKE_NOW += 15000;
+    env.runPoll();
+    await tick(); await tick(); await tick();
+    check('a backgrounded tab does not poll',
+      !env.TM._tasks.some(t => t.title === 'While hidden'),
+      JSON.stringify(env.TM._tasks.map(t => t.title)));
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
