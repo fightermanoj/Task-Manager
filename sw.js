@@ -15,7 +15,13 @@
 //     offline costs nothing. Calling respondWith() there would turn a harmless
 //     font miss into a thrown error.
 
-const VERSION = 'tm-v4';
+// Bumping this is what makes a deploy reach an installed device promptly. The
+// name is part of both cache keys, so a new value means the install handler
+// re-fetches the shell into a fresh cache and the activate handler deletes the
+// old one — one reload, not two. Without a bump the files still update, but via
+// stale-while-revalidate, which serves the previous copy first and only picks
+// up the new one on the following load.
+const VERSION = 'tm-v5';
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
