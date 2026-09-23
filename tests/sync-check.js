@@ -71,6 +71,10 @@ function buildEnv(opts) {
   const state = {
     upserts: [],
     upsertError: null,
+    // The inverse of upsertError: the groups endpoint alone fails, which is what
+    // a live project whose (user_id, name) index is still the partial one from
+    // an older schema.sql actually does — 42P10, every cycle.
+    groupsError: null,
     selects: 0,
     // Runs during the pull, which is how "the user typed while the request was
     // in flight" is reproduced.
@@ -91,6 +95,12 @@ function buildEnv(opts) {
           // before it ever reaches the pull.
           if (state.upsertError && table !== 'task_groups') {
             return Promise.resolve({ error: state.upsertError });
+          }
+          // And the reverse: the groups endpoint fails on its own. This is the
+          // shape that shipped to a live project, and it used to abort the whole
+          // cycle — no pull, no push, on every sync, indefinitely.
+          if (state.groupsError && table === 'task_groups') {
+            return Promise.resolve({ error: state.groupsError });
           }
           const target = table === 'task_groups' ? (opts.remoteGroups || []) : remote;
           rows.forEach(row => {
@@ -391,6 +401,39 @@ async function main() {
     await tick(); await tick();
     check('the retry succeeds', env.remote.length === 1);
     check('and the pill recovers', env.pill.textContent === 'Synced', env.pill.textContent);
+  }
+
+  console.log('\n[sync-11] A group failure cannot take task sync down with it');
+  {
+    // The failure this guards is the one that actually shipped. pushGroups ran
+    // first and unguarded, so a project whose (user_id, name) index was still
+    // the partial one from an older schema.sql threw here on every cycle and
+    // took the pull and the push with it. The symptom was a red "Not synced"
+    // and nothing moving in either direction, while the tasks themselves were
+    // perfectly healthy the whole time. A group is a label on a task, not the
+    // task, and it must not be able to hold the dataset hostage.
+    const env = buildEnv({
+      tasks: [task({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'Local only' })],
+      remote: [row({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: 'From the server' })],
+      groups: ['Home']
+    });
+    env.state.groupsError = {
+      code: '42P10',
+      message: 'there is no unique or exclusion constraint matching the ON CONFLICT specification'
+    };
+
+    await tick(); await tick(); await tick();
+
+    check('the local task is still uploaded',
+      env.remote.some(r => r.title === 'Local only'),
+      JSON.stringify(env.remote.map(r => r.title)));
+    check('the server row is still pulled and applied',
+      env.TM._tasks.some(t => t.title === 'From the server'),
+      JSON.stringify(env.TM._tasks.map(t => t.title)));
+    check('the group failure is still reported, and named',
+      env.pill.textContent === 'Groups not synced', env.pill.textContent || '(empty)');
+    check('and it is still flagged as something being wrong',
+      env.pill.classList.contains('is-error'));
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);

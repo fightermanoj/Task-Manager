@@ -383,7 +383,28 @@
     running = true;
     setStatus('Syncing…');
     try {
-      await pushGroups(current);
+      // The group push gets its own try, and that isolation is the whole point
+      // of this shape. It used to sit unguarded at the top of the cycle, so one
+      // failure here aborted everything after it — pull() never ran, push()
+      // never ran, and nothing moved in either direction. Worse, the marker
+      // that would have stopped it retrying is written at the end of the same
+      // call that threw, so it failed identically on every sync forever.
+      //
+      // That is not hypothetical: it is what a project whose (user_id, name)
+      // index is still the partial one from an older schema.sql does on every
+      // cycle. A group is a label on a task, not the task. Losing one is worth
+      // reporting; it is not worth the whole dataset.
+      let groupsFailed = false;
+      try {
+        await pushGroups(current);
+      } catch (groupErr) {
+        groupsFailed = true;
+        // The pill is what the user sees; this is what a developer sees.
+        if (typeof console !== 'undefined') {
+          console.warn('[sync] group push failed; tasks continue', groupErr);
+        }
+      }
+
       // Pull before pushing, and this order is not cosmetic. Pushing first
       // uploads this device's copy over whatever the server already holds, and
       // on a device that has never synced that copy is the older one by
@@ -398,7 +419,11 @@
       // idea of it.
       observe();
       await push(current);
-      setStatus('Synced');
+      // Named precisely rather than a flat "Synced". The tasks did go, and
+      // saying so while still flagging the groups is the honest report — the
+      // old wording could only say everything worked or nothing did.
+      if (groupsFailed) setStatus('Groups not synced', true);
+      else setStatus('Synced');
     } catch (err) {
       // Never surfaced as a modal or a lost edit. The outbox still holds
       // everything unsent, and the next flush retries.
