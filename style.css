@@ -1842,13 +1842,25 @@ body.view-day .main-layout {
     min-width: var(--control-h-touch);
   }
 
+  /* The first pass above covered the card actions and the forms, but not the
+     chrome: the header controls and the two toasts were still 28px. They matter
+     more than the card buttons on a phone, not less — the header is the only
+     way to change view, mode or theme, and the undo toast is a time-limited
+     recovery for a destructive action, which is the worst place to mis-tap. */
+  .ctrl-btn,
+  .update-bar-btn,
+  .auth-tab {
+    min-height: var(--control-h-touch);
+  }
+
   /* The glyphs read too small once the target is this large. */
   .btn-timer-toggle,
   .btn-que-toggle,
   .btn-observe,
   .btn-focus-action,
   .btn-delete,
-  .btn-picker-trigger {
+  .btn-picker-trigger,
+  .ctrl-btn {
     font-size: var(--text-sm);
   }
 
@@ -1891,6 +1903,27 @@ body.view-day .main-layout {
 
   .app-header {
     padding: var(--space-3) var(--space-4);
+  }
+
+  /* One row, scrolled sideways, rather than as many rows as it takes.
+     With a session on the deployed origin the strip is six controls — view,
+     UI mode, theme, who, sign out, reminders — which wrapped to three rows at
+     360px, right-aligned, so the header ate a third of the screen before the
+     first task. Same treatment the sidebar's .nav-list already gets, which is
+     where the pattern comes from. `.hidden` is display:none !important, so the
+     controls that are absent on a given device leave no gap behind. */
+  .header-controls {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .header-controls > * {
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .top-focus-bar {

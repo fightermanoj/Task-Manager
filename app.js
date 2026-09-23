@@ -485,7 +485,12 @@ function applyView(view) {
 }
 
 // UI Mode & Theme Management
-let currentUIMode = readStored('tm_ui_mode') || 'mode-terminal';
+// The stored value wins, so this default only decides what a device that has
+// never made a choice sees. Modern UI on a dark ground: it is the more legible
+// of the two at a glance, and on a phone the terminal chrome is noise around
+// the one thing the screen is for. Only the fallback changed — anyone who has
+// already picked a mode keeps it.
+let currentUIMode = readStored('tm_ui_mode') || 'mode-gui';
 let currentTheme = readStored('tm_theme') || 'theme-dark';
 
 function applyUIMode(mode) {
