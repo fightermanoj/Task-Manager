@@ -185,7 +185,16 @@ let currentViewDate = today();
 let lastKnownToday = today();
 
 // Initial State
-const DEFAULT_GROUPS = ['Home', 'Work', 'Personal'];
+// Where a task goes when you have not said otherwise. It is an ordinary group,
+// not a special case: it shows in the sidebar with its own count, it can be
+// renamed away from, and it syncs to the server like any other — so it is simply
+// a member of this list, and first in it because it is the one meant to be
+// emptied. Declared above the group migration below rather than beside it,
+// because a `const` read before its own line is a TDZ crash at boot, and a boot
+// crash lands above every listener — the app would paint once and then ignore
+// every click.
+const UNLISTED_GROUP = 'UnListed';
+const DEFAULT_GROUPS = [UNLISTED_GROUP, 'Home', 'Work', 'Personal'];
 
 const RECUR_VALUES = ['none', 'daily', 'weekly'];
 
@@ -211,7 +220,7 @@ function normalizeTask(raw) {
   return {
     id: t.id ? String(t.id) : newId(),
     title: typeof t.title === 'string' ? t.title : '',
-    group: (typeof t.group === 'string' && t.group) ? t.group : 'Personal',
+    group: (typeof t.group === 'string' && t.group) ? t.group : UNLISTED_GROUP,
     dueDate: typeof t.dueDate === 'string' ? t.dueDate : '',
     time: typeof t.time === 'string' ? t.time : '',
     recur: RECUR_VALUES.includes(t.recur) ? t.recur : 'none',
@@ -275,6 +284,14 @@ if (!Array.isArray(groups)) groups = [...DEFAULT_GROUPS];
 groups = groups.filter(g => typeof g === 'string' && g !== '');
 if (groups.length === 0) groups = [...DEFAULT_GROUPS];
 
+// An install that predates "UnListed" has its own saved list without it, and
+// DEFAULT_GROUPS is only ever consulted when nothing is stored at all — so
+// without this the group would exist for a new device and not for the one that
+// already has the tasks. Added at the front, and the flag below makes it stick
+// to storage on this same load rather than waiting for the next edit.
+let unlistedAdded = false;
+if (!groups.includes(UNLISTED_GROUP)) { groups.unshift(UNLISTED_GROUP); unlistedAdded = true; }
+
 // `tasks` gets the same container guard `groups` has. `.map` on a non-array is a
 // TypeError thrown while this module-level statement is still evaluating, so the
 // failure lands above the render, above every listener, and above the service
@@ -303,7 +320,7 @@ tasks.forEach(t => { t.isTiming = false; t.timerStartedAt = null; });
 // declarations hoist, so calling them here is safe.
 const legacyIdsMigrated = migrateLegacyIds();
 const completionsMigrated = migrateCompletedAt();
-if (legacyIdsMigrated || completionsMigrated) saveToStorage();
+if (legacyIdsMigrated || completionsMigrated || unlistedAdded) saveToStorage();
 
 let selectedGroup = 'All';
 
@@ -422,7 +439,9 @@ function checkDateRollover() {
     if (dayViewPicker) dayViewPicker.value = currentViewDate;
     renderDayView();
   }
-  if (taskDateInput) taskDateInput.value = formatDateDDMM(now);
+  // The add form's date is deliberately not refilled here. It had a default of
+  // today, which this no longer does — so writing one in at midnight would
+  // reintroduce the default by the back door, on a tab that happened to be open.
   renderAll();
 }
 
@@ -533,8 +552,10 @@ if (themeToggleBtn) {
   });
 }
 
-// Initialize default date in text input (e.g. "22-9")
-if (taskDateInput) taskDateInput.value = formatDateDDMM(today());
+// The add form starts with an empty date, and that is the point: leaving it blank
+// means the task has no date, which is a different and more useful thing than
+// today. Filing everything under today made the day view a copy of the list.
+// Type a date, or use the picker beside the field, to give it one.
 if (dayViewPicker) dayViewPicker.value = currentViewDate;
 
 // Save State
@@ -618,7 +639,7 @@ function renderFocusBar() {
       <div class="focus-item-left">
         <span class="focus-rank-badge" aria-hidden="true">#${idx + 1}</span>
         <span class="tag-group">${escapeHtml(task.group)}</span>
-        <span class="focus-item-title-text">${escapeHtml(task.title)}</span>
+        <span class="focus-item-title-text" data-task-id="${task.id}">${escapeHtml(task.title)}</span>
       </div>
 
       <div class="focus-item-right">
@@ -665,9 +686,17 @@ function totalTrackedSeconds() {
 // Render Sidebar: Views + Groups
 function renderGroups() {
   if (taskGroupSelect) {
+    // Read the selection before rebuilding: assigning innerHTML throws the old
+    // options away and with them the current value, which then lands on whichever
+    // option happens to be first. Captured here so a deliberate pick survives the
+    // re-render that some unrelated edit caused, and only a value that no longer
+    // exists falls through to UnListed. The add handler sets UnListed itself when
+    // a task is added, so "add, then file it" is the resting state either way.
+    const previous = taskGroupSelect.value;
     taskGroupSelect.innerHTML = groups
       .map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`)
       .join('');
+    taskGroupSelect.value = groups.includes(previous) ? previous : UNLISTED_GROUP;
   }
 
   // Archived tasks are excluded here so every badge matches the list it opens.
@@ -714,6 +743,23 @@ function renderGroups() {
 // Helper to generate task HTML card.
 // `ctx` namespaces the card id so the same task can appear in both the main list
 // and the Day View without producing duplicate ids on the page.
+// The options for a card's group dropdown.
+//
+// The task's own group is included even when the list does not hold it, and that
+// is not tidiness. A task can outlive its group: it may have been created before
+// a group existed, or arrived from another device whose group list is different.
+// A select with no matching option silently shows the first one instead — so the
+// card would read "UnListed" while the task was really in "Work", and the next
+// change to that dropdown would write the wrong name back with it. Prepending the
+// real name means the card always tells the truth about where the task is filed.
+function groupOptionsHtml(current) {
+  const names = groups.slice();
+  if (current && names.indexOf(current) === -1) names.unshift(current);
+  return names
+    .map(g => `<option value="${escapeHtml(g)}"${g === current ? ' selected' : ''}>${escapeHtml(g)}</option>`)
+    .join('');
+}
+
 function renderTaskCardHtml(task, ctx = 'list') {
   const isTerminal = currentUIMode === 'mode-terminal';
   const subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
@@ -792,8 +838,28 @@ function renderTaskCardHtml(task, ctx = 'list') {
             ${task.completed ? 'checked' : ''}
             onchange="toggleTask('${task.id}')"
           />
-          <span class="task-title">${escapeHtml(task.title)}</span>
-          <span class="tag-group">${escapeHtml(task.group)}</span>
+          <!-- The heading is an input rather than a span so it can be edited in
+               place. Styled to be indistinguishable from text until you click it,
+               which is the same contract the time and date fields on this row
+               already have. Enter commits and leaves, because an input that is
+               not inside a form does nothing on Enter by default. -->
+          <input
+            type="text"
+            class="task-title-input"
+            data-task-id="${task.id}"
+            value="${escapeHtml(task.title)}"
+            aria-label="Heading for ${task.completed ? 'completed task' : 'task'}"
+            onchange="handleCardTitleInput('${task.id}', this)"
+            onkeydown="if (event.key === 'Enter') { event.preventDefault(); this.blur(); }"
+          />
+          <!-- A select, so filing a task is one gesture from the card instead of a
+               trip to the sidebar. It shows the task's own group even if the list
+               no longer holds it — see groupOptionsHtml. -->
+          <select
+            class="tag-group-select"
+            aria-label="Group for ${escapeHtml(task.title)}"
+            onchange="handleCardGroupChange('${task.id}', this.value)"
+          >${groupOptionsHtml(task.group)}</select>
           ${observeBadge}
           ${timerLabel}
 
@@ -1309,7 +1375,7 @@ if (openTimePickerBtn && taskTimePickerHidden) {
 addTaskForm.addEventListener('submit', (e) => {
   e.preventDefault();
   let rawTitle = taskTitleInput.value.trim();
-  const group = taskGroupSelect.value;
+  const group = taskGroupSelect.value || UNLISTED_GROUP;
   let rawDate = taskDateInput.value.trim();
   let rawTime = taskTimeInput.value.trim();
   const recur = taskRecurSelect.value || 'none';
@@ -1324,8 +1390,13 @@ addTaskForm.addEventListener('submit', (e) => {
   const parsedTime = rawTime ? parseTimeString(rawTime) : '';
   const time = isValidTimeString(parsedTime) ? parsedTime : (extracted.extractedTime || '');
 
+  // No date is a real answer, and the one to default to. An empty dueDate used to
+  // become today, which quietly put every task into today's day view and made
+  // "dated" mean nothing — a task with no date is undated, and it sorts to the
+  // bottom of the list until you give it one. A date named in the title still
+  // wins, so "Server backup 22-9" keeps working without touching the field.
   const parsedDate = rawDate ? parseDateString(rawDate) : '';
-  const dueDate = isValidDateString(parsedDate) ? parsedDate : (extracted.extractedDate || today());
+  const dueDate = isValidDateString(parsedDate) ? parsedDate : (extracted.extractedDate || '');
 
   const newTask = normalizeTask({
     id: newId(),
@@ -1342,7 +1413,11 @@ addTaskForm.addEventListener('submit', (e) => {
   tasks.push(newTask);
   taskTitleInput.value = '';
   taskTimeInput.value = '';
-  taskDateInput.value = formatDateDDMM(today());
+  taskDateInput.value = '';
+  // Back to UnListed rather than leaving the last choice in place: the flow this
+  // is built for is to add a task quickly and then file it from the card, so the
+  // next task should start unsorted whether or not this one was filed here.
+  taskGroupSelect.value = UNLISTED_GROUP;
   saveToStorage();
   renderAll();
 });
@@ -1404,6 +1479,70 @@ todayBtn.addEventListener('click', () => {
   currentViewDate = today();
   renderDayView();
 });
+
+// The two live copies of a heading, refreshed in place after a rename.
+//
+// Deliberately not renderAll(), and the reason is not tidiness. A change event on
+// an inline field fires when the field loses focus — and losing focus is exactly
+// what happens the moment you click the checkbox or a button beside it. Rebuilding
+// the list at that instant detaches the node the click was aimed at, so the browser
+// dispatches the click on the container instead and the control never fires: rename
+// a task and tick it off in one motion and the tick is silently lost, every time.
+// Touching text that is already on screen leaves nothing under the pointer to move.
+//
+// The card you typed into already shows the new heading — it is where the text came
+// from — but the same task is on screen twice with Day View open, and a third time
+// in the focus bar when it is queued.
+//
+// Only these two are handled. The accessible names that embed the heading — on the
+// checkbox, the timer and queue buttons, the delete button — keep the old one until
+// the next render, which any further interaction causes. Nothing reads them out
+// unprompted, so a stale one is never announced to a screen reader and never seen.
+function refreshTitleCopies(task, editedEl) {
+  const sel = `[data-task-id="${task.id}"]`;
+  document.querySelectorAll(`.task-title-input${sel}`).forEach(el => {
+    if (el !== editedEl) el.value = task.title;
+  });
+  document.querySelectorAll(`.focus-item-title-text${sel}`).forEach(el => {
+    el.textContent = task.title;
+  });
+}
+
+// Renaming a task from its card. The title is the task, so an empty one is not
+// stored: the field snaps back to what is saved, which keeps the caret where it was
+// and makes "cleared it by accident, clicked away" cost nothing.
+//
+// Note this does not re-run the title's date/time extraction. The card already has
+// its own time and date fields, and a rename quietly moving a task to a different
+// day would be the kind of surprise that makes you stop trusting the list.
+window.handleCardTitleInput = function(taskId, el) {
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) return;
+
+  const next = ((el && el.value) || '').trim();
+  if (!next) { if (el) el.value = task.title; return; }
+  if (next === task.title) return;
+
+  task.title = next;
+  saveToStorage();
+  refreshTitleCopies(task, el);
+};
+
+// Moving a task to another group from its card. Whatever was chosen is what is
+// stored — the dropdown is built from the real group list, so there is nothing to
+// validate against, and rejecting a value the list itself supplied would only
+// ever mean the user's own click failed.
+window.handleCardGroupChange = function(taskId, value) {
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) return;
+
+  const next = String(value || '').trim();
+  if (!next || next === task.group) return;
+
+  task.group = next;
+  saveToStorage();
+  renderAll();
+};
 
 // CARD INLINE PARSING HANDLERS.
 // An unparseable value re-renders from stored state, which snaps the field back to

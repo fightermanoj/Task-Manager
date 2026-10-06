@@ -1001,6 +1001,125 @@ console.log('\n[27] A deleted task can be brought back');
   check('and a click once granted does switch them on', RM.remindersOn() === true,
     `key=${storage.get(RM.REMINDERS_ON_KEY)}`);
 
+  console.log('\n[29] UnListed, an undated task, and filing from the card');
+  storage.clear();
+  const NL = boot();
+  const NLwin = bootWindow;
+
+  check('the default group list leads with UnListed', NL.groups[0] === 'UnListed',
+    JSON.stringify(NL.groups));
+  check('a task with no group at all normalizes to UnListed',
+    NL.normalizeTask({ title: 'x' }).group === 'UnListed',
+    NL.normalizeTask({ title: 'x' }).group);
+
+  // An install that predates UnListed has its own saved list, and DEFAULT_GROUPS
+  // is only consulted when nothing is stored at all — so without the migration
+  // the group would exist on a fresh device and not on the one holding the tasks.
+  storage.clear();
+  storage.set('tm_groups', JSON.stringify(['Home', 'Work']));
+  const OG = boot();
+  check('an older group list gains UnListed', OG.groups.includes('UnListed'),
+    JSON.stringify(OG.groups));
+  check('ahead of the groups it did not have', OG.groups[0] === 'UnListed',
+    JSON.stringify(OG.groups));
+  check('and the addition is written back, not recomputed every load',
+    JSON.parse(storage.get('tm_groups')).includes('UnListed'),
+    `stored ${storage.get('tm_groups')}`);
+
+  // The add form. A fresh boot last, and that is not tidiness: `handlers` is keyed
+  // by element and event, and every boot overwrites it — so the add-form submit
+  // handler in that map belongs to whichever instance booted most recently, and
+  // driving it from an older instance's handler would push into the wrong array.
+  // Element values are set explicitly too: the stub is shared between boots, so
+  // whatever an earlier section typed is still sitting in it.
+  storage.clear();
+  const F = boot();
+  const Fwin = bootWindow;
+
+  const addTask = (title, { group = '', date = '', time = '' } = {}) => {
+    getEl('task-title-input').value = title;
+    getEl('task-group-select').value = group;
+    getEl('task-date-input').value = date;
+    getEl('task-time-input').value = time;
+    getEl('task-recur-select').value = 'none';
+    handlers['add-task-form:submit']({ preventDefault() {} });
+    return F.tasks[F.tasks.length - 1];
+  };
+
+  const undated = addTask('Water the plants');
+  check('a task with no date is stored with none', undated.dueDate === '',
+    `got "${undated.dueDate}"`);
+  check('and is not quietly filed under today', undated.dueDate !== F.today(),
+    'the add form still defaults the date to today');
+  check('an untouched group select files it as UnListed', undated.group === 'UnListed',
+    `got "${undated.group}"`);
+
+  const dated = addTask('Renew the domain', { date: '24-9' });
+  check('a typed date still wins', dated.dueDate === '2026-09-24', `got "${dated.dueDate}"`);
+
+  // The path the default was there for. Dropping the default must not drop this.
+  const fromTitle = addTask('Server backup 22-9');
+  check('a date in the title still parses', fromTitle.dueDate === '2026-09-22',
+    `got "${fromTitle.dueDate}"`);
+  check('while the heading is left clean', fromTitle.title === 'Server backup',
+    `got "${fromTitle.title}"`);
+
+  check('the date field is cleared after adding', getEl('task-date-input').value === '',
+    `got "${getEl('task-date-input').value}"`);
+  check('and the group select rests back at UnListed',
+    getEl('task-group-select').value === 'UnListed', `got "${getEl('task-group-select').value}"`);
+
+  // Renaming from the card.
+  const cardTask = F.tasks[0];
+  Fwin.handleCardTitleInput(cardTask.id, { value: '  Water the plants twice  ' });
+  check('a rename is stored, trimmed', cardTask.title === 'Water the plants twice',
+    `got "${cardTask.title}"`);
+
+  const blankEl = { value: '   ' };
+  Fwin.handleCardTitleInput(cardTask.id, blankEl);
+  check('an empty heading is refused — the title is the task',
+    cardTask.title === 'Water the plants twice', `got "${cardTask.title}"`);
+  check('and the field snaps back to what is stored', blankEl.value === cardTask.title,
+    `got "${blankEl.value}"`);
+
+  const htmlBeforeRename = getEl('tasks-container').innerHTML;
+  Fwin.handleCardTitleInput(cardTask.id, { value: 'Call the bank 9am' });
+  check('renaming does not re-run date extraction',
+    cardTask.title === 'Call the bank 9am' && cardTask.time === '',
+    `title="${cardTask.title}" time="${cardTask.time}"`);
+  // The one that is not obvious. A change event on an inline field fires on blur,
+  // and blur is what happens the instant you click the checkbox beside it — so a
+  // rebuild here detaches the node the click was aimed at and the tick is lost.
+  // The rendered list must therefore come through a rename untouched.
+  check('and it does not rebuild the list under the pointer',
+    getEl('tasks-container').innerHTML === htmlBeforeRename,
+    'a re-render on blur swallows the click that caused the blur');
+
+  // Filing from the card.
+  Fwin.handleCardGroupChange(cardTask.id, 'Work');
+  check('the card dropdown moves the task', cardTask.group === 'Work',
+    `got "${cardTask.group}"`);
+  check('and the move is persisted',
+    JSON.parse(storage.get('tm_tasks')).some(t => t.id === cardTask.id && t.group === 'Work'),
+    'the move only reached memory');
+  Fwin.handleCardGroupChange(cardTask.id, '');
+  check('an empty value is ignored rather than blanking the group',
+    cardTask.group === 'Work', `got "${cardTask.group}"`);
+
+  // A task whose group the list no longer holds. A select with no matching option
+  // displays the first one instead — so the card would read "UnListed" while the
+  // task was really elsewhere, and the next change to that dropdown would write
+  // the wrong name back with it.
+  cardTask.group = 'Retired Group';
+  F.renderAll();
+  const cardHtml = getEl('tasks-container').innerHTML;
+  check('a group the list no longer holds still appears on the card',
+    cardHtml.includes('value="Retired Group"'),
+    'the card would name a group the task is not in');
+  check('and it is the one shown as selected',
+    /<option value="Retired Group" selected>/.test(cardHtml),
+    'the dropdown would display a different group than the task is filed under');
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail === 0 ? 0 : 1);
 })();

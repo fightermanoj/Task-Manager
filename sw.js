@@ -21,7 +21,7 @@
 // old one — one reload, not two. Without a bump the files still update, but via
 // stale-while-revalidate, which serves the previous copy first and only picks
 // up the new one on the following load.
-const VERSION = 'tm-v5';
+const VERSION = 'tm-v6';
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 

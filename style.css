@@ -984,7 +984,46 @@ body.view-day .main-layout {
   opacity: 0.6;
 }
 
-.task-card.completed .task-title {
+/* The completed strike-through moved to .task-title-input below, which is what
+   the heading is now. .tag-group is still live — the focus bar's compact rows
+   use it, and a dropdown would be wrong in a strip that size. */
+
+/* The inline heading. It replaces a span, so it has to be invisible as a control
+   and legible as text: no box, no background, no padding of its own, and the same
+   weight and size the span had. Sized in ch so it takes roughly the width of what
+   is typed rather than the browser's default 20-odd characters, and allowed to
+   grow — min-width 0 keeps it from forcing the row wider than the card. */
+.task-title-input {
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 12ch;
+  max-width: 100%;
+}
+
+/* The affordance appears on hover and on focus, and nowhere else. A permanently
+   visible box around every title would turn a list of tasks into a list of form
+   fields, which is what this is trying not to be. Both tokens are defined in all
+   four palettes, so neither needs a fallback. */
+.task-title-input:hover {
+  border-color: var(--border-main);
+}
+
+.task-title-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  background: var(--blue-tint);
+}
+
+/* Matches .task-card.completed .task-title, which the input replaced. */
+.task-card.completed .task-title-input {
   text-decoration: line-through;
   color: var(--text-dim);
 }
@@ -1028,6 +1067,48 @@ body.view-day .main-layout {
   border-radius: var(--radius-sm);
   font-weight: 500;
   white-space: nowrap;
+}
+
+/* The same badge, as a dropdown — it replaced a static .tag-group span, so it
+   keeps that badge's size, tint and radius rather than looking like a form
+   control dropped into the row. `appearance: none` removes the platform arrow,
+   which is what made the first attempt read as a box; the caret below is drawn
+   instead, so the affordance is still there without the chrome. */
+.tag-group-select {
+  font-size: var(--text-2xs);
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--text-main);
+  background: rgba(125, 125, 125, 0.15);
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 9px center, right 5px center;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px 18px 2px var(--space-2);
+  white-space: nowrap;
+  cursor: pointer;
+  /* Never let it squash: the group name is the point of the control. */
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.tag-group-select:hover {
+  border-color: var(--border-main);
+}
+
+.tag-group-select:focus-visible {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+/* Some platforms ignore `background` for a select's option list itself, which is
+   fine — the closed control is what sits in the row. */
+.tag-group-select option {
+  background: var(--bg-card);
+  color: var(--text-main);
 }
 
 .tag-observe {
