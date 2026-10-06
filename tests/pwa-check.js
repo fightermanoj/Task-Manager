@@ -156,5 +156,47 @@ check('a first install does not bounce the page',
 check('registration waits for load', /addEventListener\('load', wireServiceWorker\)/.test(app),
   'registering during parse competes with the first paint for bandwidth');
 
+console.log('\n[pwa-6] the daily keep-alive');
+// Supabase pauses a free project after seven days with no activity. This cron is
+// the only thing standing between the app and that, and removing it breaks
+// nothing you can see today — the first symptom is a status pill reading "Not
+// synced" a week from now, which reads as a sync bug rather than a sleeping
+// database. Exactly the class of failure this suite is for.
+const crons = (vercel && vercel.crons) || [];
+const ping = crons.find(c => c && c.path === '/api/keepalive');
+check('a keep-alive is scheduled', !!ping,
+  'without it the free project pauses after seven quiet days');
+check('what it calls is a real route', ping && fs.existsSync(path.join(ROOT, 'api/keepalive.js')),
+  'a cron pointing at a missing file fails silently, once a day, forever');
+// A free plan runs a cron at most once a day, and Vercel refuses to *deploy* a
+// schedule that runs more often. So this is a build failure rather than a
+// runtime one — but it is this commit's deploy that fails, so catch it here.
+// A step or a list in either of the first two fields means more than daily:
+// "*/5 * * * *" is every five minutes, "0 */2 * * *" is twelve times a day.
+check('it runs no more than once a day, the free-plan limit',
+  !!ping && /^\d+ \d+ \* \* \*$/.test(ping.schedule),
+  ping ? `"${ping.schedule}" would run more often than daily and fail the deploy` : 'no schedule');
+check('every cron entry is a path and a schedule',
+  crons.every(c => c && typeof c.path === 'string' && typeof c.schedule === 'string'),
+  'Vercel ignores a malformed entry rather than reporting it');
+
+let keepalive = '';
+try { keepalive = read('api/keepalive.js'); } catch (e) { /* reported below */ }
+check('the handler exports a function',
+  /module\.exports\s*=\s*async\s+function/.test(keepalive),
+  'no "type": "module" in package.json, so this file is CommonJS');
+// The project URL and key are copied into the handler rather than imported,
+// because it runs on the server, where the browser globals config.js assigns to
+// do not exist. A copy can rot without a word: a stale URL pings nothing, and a
+// rotated key returns 401 on every run while everything else looks fine.
+const cfg = read('config.js');
+const cfgUrl = (cfg.match(/url:\s*'([^']+)'/) || [])[1];
+const cfgKey = (cfg.match(/anonKey:\s*'([^']+)'/) || [])[1];
+check('it pings the same project config.js does',
+  !!cfgUrl && keepalive.includes(cfgUrl), 'a stale project URL would ping nothing at all');
+check('and presents the same key',
+  !!cfgKey && keepalive.includes(cfgKey),
+  'a rotated key means a 401 on every ping, with no other symptom');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
